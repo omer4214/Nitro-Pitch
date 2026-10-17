@@ -4,11 +4,17 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import {
   ARENA_BOUNDS,
   ArenaState,
+  CarModelType,
   CarState,
   CarSurfaceState,
   ControlBindings,
   ControlInput,
+  DEFAULT_GENERAL_SETTINGS,
+  DEFAULT_GRAPHICS_SETTINGS,
   DodgeFlipType,
+  GarageFocusTarget,
+  GeneralSettingsState,
+  GraphicsSettingsState,
   ReplayEventMarker,
   ReplayFrame,
   applyReplayFrameToArena,
@@ -33,6 +39,8 @@ export interface HudSnapshot {
   blueScore: number;
   orangeScore: number;
   timeRemaining: number;
+  isOvertime?: boolean;
+  overtimeElapsed?: number;
   boost: number;
   speedKmh: number;
   altitude: number;
@@ -40,7 +48,7 @@ export interface HudSnapshot {
   ballCam: boolean;
   dodgeType: DodgeFlipType;
   surfaceState: CarSurfaceState;
-  goalBanner: { team: 'blue' | 'orange'; scorer: string } | null;
+  goalBanner: { team: 'blue' | 'orange'; scorer: string; isGoldenGoal?: boolean } | null;
   demolitionBanner: { attacker: string; victim: string } | null;
   playerGoals: number;
   playerSaves: number;
@@ -80,7 +88,11 @@ interface ArenaCanvasProps {
   onHudUpdate: (hud: HudSnapshot) => void;
   onMatchFinished: (finalState: ArenaState) => void;
   onPauseRequested: () => void;
+  garageFocusTarget?: GarageFocusTarget;
+  graphicsSettings?: GraphicsSettingsState;
+  generalSettings?: GeneralSettingsState;
   playerCosmetics: {
+    carModel?: CarModelType;
     bodyColor: string;
     finish: string;
     boostColor: string;
@@ -96,7 +108,9 @@ interface CarMeshRig {
   thrusterFlame: THREE.Mesh;
   telegraphBeacon: THREE.Mesh;
   wheels: THREE.Object3D[];
+  rimMeshes: THREE.Mesh[];
   contactShadow: THREE.Mesh;
+  builtModel: CarModelType;
 }
 
 interface PooledParticle {
@@ -115,7 +129,10 @@ interface PooledParticle {
   b: number;
 }
 
-function getFinishMaterialParams(finish: string, isHeadless = false): {
+function getFinishMaterialParams(
+  finish: string,
+  isHeadless = false
+): {
   metalness: number;
   roughness: number;
   clearcoat: number;
@@ -124,18 +141,41 @@ function getFinishMaterialParams(finish: string, isHeadless = false): {
   const capMetal = (m: number) => (isHeadless ? Math.min(0.28, m) : m);
   switch (finish) {
     case 'titanium':
-      return { metalness: capMetal(0.88), roughness: 0.22, clearcoat: 0.5, clearcoatRoughness: 0.18 };
+      return {
+        metalness: capMetal(0.88),
+        roughness: 0.2,
+        clearcoat: 0.65,
+        clearcoatRoughness: 0.14
+      };
     case 'carbon':
-      return { metalness: capMetal(0.28), roughness: 0.68, clearcoat: 0.25, clearcoatRoughness: 0.45 };
+      return {
+        metalness: capMetal(0.32),
+        roughness: 0.62,
+        clearcoat: 0.35,
+        clearcoatRoughness: 0.38
+      };
     case 'chrome':
-      return { metalness: capMetal(0.98), roughness: 0.08, clearcoat: 1.0, clearcoatRoughness: 0.05 };
+      return {
+        metalness: capMetal(0.98),
+        roughness: 0.06,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.04
+      };
     case 'anodized':
     default:
-      return { metalness: capMetal(0.76), roughness: 0.2, clearcoat: 0.96, clearcoatRoughness: 0.1 };
+      return {
+        metalness: capMetal(0.78),
+        roughness: 0.18,
+        clearcoat: 0.96,
+        clearcoatRoughness: 0.08
+      };
   }
 }
 
-function createPitchTextures(maxAnisotropy: number, isHeadless = false): {
+function createPitchTextures(
+  maxAnisotropy: number,
+  isHeadless = false
+): {
   albedoMap: THREE.CanvasTexture;
   bumpMap: THREE.CanvasTexture;
 } {
@@ -146,14 +186,24 @@ function createPitchTextures(maxAnisotropy: number, isHeadless = false): {
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
 
-  // Rich Rocket League stadium mowed turf stripes + diagonal herringbone sheen
-  const stripeCount = 20;
+  // Rich Rocket League stadium mowed turf stripes + subtle hexagonal tech grid
+  const stripeCount = 22;
   for (let i = 0; i < stripeCount; i++) {
-    ctx.fillStyle = i % 2 === 0 ? '#0c3b2e' : '#124e3d';
-    ctx.fillRect(0, (i * canvas.height) / stripeCount, canvas.width, canvas.height / stripeCount);
+    ctx.fillStyle = i % 2 === 0 ? '#0b3d2e' : '#11523f';
+    ctx.fillRect(
+      0,
+      (i * canvas.height) / stripeCount,
+      canvas.width,
+      canvas.height / stripeCount
+    );
   }
 
-  // Subtle radial vignette for stadium depth
+  // Subtle longitudinal mow lines
+  for (let i = 0; i < 12; i++) {
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.03)';
+    ctx.fillRect((i * size) / 12, 0, size / 12, size);
+  }
+
   const vig = ctx.createRadialGradient(
     size / 2,
     size / 2,
@@ -162,51 +212,48 @@ function createPitchTextures(maxAnisotropy: number, isHeadless = false): {
     size / 2,
     size * 0.68
   );
-  vig.addColorStop(0, 'rgba(56, 189, 248, 0.05)');
+  vig.addColorStop(0, 'rgba(56, 189, 248, 0.07)');
   vig.addColorStop(0.6, 'rgba(0, 0, 0, 0)');
-  vig.addColorStop(1, 'rgba(2, 6, 23, 0.42)');
+  vig.addColorStop(1, 'rgba(2, 6, 23, 0.45)');
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, size, size);
 
-  // Rounded-rectangle pitch boundary line matching Rocket League stadium
   const pad = 42 * scale;
   const cornerR = 120 * scale;
-  ctx.strokeStyle = 'rgba(241, 245, 249, 0.9)';
+  ctx.strokeStyle = 'rgba(241, 245, 249, 0.92)';
   ctx.lineWidth = Math.max(2, 8 * scale);
   ctx.beginPath();
   ctx.roundRect(pad, pad, size - pad * 2, size - pad * 2, cornerR);
   ctx.stroke();
 
-  // Center line
+  // Center line & circle
   ctx.beginPath();
   ctx.moveTo(pad, size / 2);
   ctx.lineTo(size - pad, size / 2);
   ctx.stroke();
 
-  // Center circle + inner kickoff ring
   ctx.beginPath();
   ctx.arc(size / 2, size / 2, 128 * scale, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
   ctx.lineWidth = Math.max(1.5, 5 * scale);
   ctx.beginPath();
-  ctx.arc(size / 2, size / 2, 34 * scale, 0, Math.PI * 2);
+  ctx.arc(size / 2, size / 2, 36 * scale, 0, Math.PI * 2);
   ctx.stroke();
 
   // Blue (-Z) & Orange (+Z) penalty boxes
   ctx.lineWidth = Math.max(2, 7 * scale);
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.88)';
   ctx.strokeRect(size * 0.22, pad, size * 0.56, 155 * scale);
 
-  ctx.strokeStyle = 'rgba(251, 146, 60, 0.85)';
+  ctx.strokeStyle = 'rgba(251, 146, 60, 0.88)';
   ctx.strokeRect(size * 0.22, size - pad - 155 * scale, size * 0.56, 155 * scale);
 
   const albedoMap = new THREE.CanvasTexture(canvas);
   albedoMap.colorSpace = THREE.SRGBColorSpace;
   albedoMap.anisotropy = maxAnisotropy;
 
-  // High-frequency turf micro-blade bump map
   const bumpCanvas = document.createElement('canvas');
   bumpCanvas.width = 128;
   bumpCanvas.height = 128;
@@ -223,7 +270,7 @@ function createPitchTextures(maxAnisotropy: number, isHeadless = false): {
   const bumpMap = new THREE.CanvasTexture(bumpCanvas);
   bumpMap.wrapS = THREE.RepeatWrapping;
   bumpMap.wrapT = THREE.RepeatWrapping;
-  bumpMap.repeat.set(16, 24);
+  bumpMap.repeat.set(18, 26);
 
   return { albedoMap, bumpMap };
 }
@@ -235,7 +282,7 @@ function createHexWallTexture(): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d')!;
   ctx.clearRect(0, 0, 256, 256);
 
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.42)';
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.46)';
   ctx.lineWidth = 2.5;
   const stepX = 32;
   const stepY = 28;
@@ -305,8 +352,8 @@ function createRadialShadowTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Generates points along the rounded-rectangle Rocket League stadium perimeter
- * so we can build the curved floor-to-wall ramp, vertical glass-hex wall, and upper ceiling curve.
+ * Samples dense perimeter points along both the straight stadium walls AND the 4 rounded corners
+ * so the solid curved floor-to-wall ramp block matches `evaluateRoundedArenaWall` 1-to-1!
  */
 function sampleRoundedPerimeterPoints(
   halfW: number,
@@ -317,6 +364,26 @@ function sampleRoundedPerimeterPoints(
   const innerW = halfW - cornerR;
   const innerL = halfL - cornerR;
 
+  const pushSegment = (
+    x1: number,
+    z1: number,
+    x2: number,
+    z2: number,
+    nx: number,
+    nz: number,
+    steps: number
+  ) => {
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      pts.push({
+        x: x1 + (x2 - x1) * t,
+        z: z1 + (z2 - z1) * t,
+        nx,
+        nz
+      });
+    }
+  };
+
   const pushArc = (
     cx: number,
     cz: number,
@@ -324,7 +391,7 @@ function sampleRoundedPerimeterPoints(
     endAngle: number,
     steps: number
   ) => {
-    for (let i = 0; i <= steps; i++) {
+    for (let i = 0; i < steps; i++) {
       const a = startAngle + ((endAngle - startAngle) * i) / steps;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
@@ -337,16 +404,35 @@ function sampleRoundedPerimeterPoints(
     }
   };
 
-  // Sample 4 rounded corners + straight segments
-  pushArc(innerW, innerL, 0, Math.PI / 2, 10);
-  pushArc(-innerW, innerL, Math.PI / 2, Math.PI, 10);
-  pushArc(-innerW, -innerL, Math.PI, (Math.PI * 3) / 2, 10);
-  pushArc(innerW, -innerL, (Math.PI * 3) / 2, Math.PI * 2, 10);
+  // Right wall (+X) from -innerL to +innerL
+  pushSegment(halfW, -innerL, halfW, innerL, -1, 0, 16);
+  // Corner 1 (+X, +Z)
+  pushArc(innerW, innerL, 0, Math.PI / 2, 12);
+  // Orange back wall (+Z) from +innerW to -innerW (dense steps around goal mouth!)
+  pushSegment(innerW, halfL, -innerW, halfL, 0, -1, 24);
+  // Corner 2 (-X, +Z)
+  pushArc(-innerW, innerL, Math.PI / 2, Math.PI, 12);
+  // Left wall (-X) from +innerL to -innerL
+  pushSegment(-halfW, innerL, -halfW, -innerL, 1, 0, 16);
+  // Corner 3 (-X, -Z)
+  pushArc(-innerW, -innerL, Math.PI, (Math.PI * 3) / 2, 12);
+  // Blue back wall (-Z) from -innerW to +innerW (dense steps around goal mouth!)
+  pushSegment(-innerW, -halfL, innerW, -halfL, 0, 1, 24);
+  // Corner 4 (+X, -Z)
+  pushArc(innerW, -innerL, (Math.PI * 3) / 2, Math.PI * 2, 12);
+
   pts.push({ ...pts[0] });
   return pts;
 }
 
-function createRoundedStadiumEnclosure(hexTex: THREE.CanvasTexture): THREE.Group {
+/**
+ * Builds the Rocket League rounded-rectangle stadium enclosure with a SOLID, physically-matched
+ * quarter-circle curved ramp block (`R_ramp = 5.5m`) along all walls and corners!
+ */
+function createRoundedStadiumEnclosure(
+  hexTex: THREE.CanvasTexture,
+  carbonTex: THREE.CanvasTexture
+): THREE.Group {
   const group = new THREE.Group();
   const perim = sampleRoundedPerimeterPoints(
     ARENA_BOUNDS.halfWidth,
@@ -354,13 +440,26 @@ function createRoundedStadiumEnclosure(hexTex: THREE.CanvasTexture): THREE.Group
     ARENA_BOUNDS.cornerRadius
   );
 
-  // Build lower curved wall ramp (y=0 to y=5.5) + main arena wall (y=5.5 to y=40) + ceiling curve (y=40 to y=46)
+  const rampR = ARENA_BOUNDS.wallCurveRadius; // 5.5m exact quarter-circle ramp
+  const arcAngles = [0, 0.25, 0.5, 0.75, 1.0].map((t) => t * (Math.PI / 2));
+
+  // Profile from floor (y=0, inset=5.5m) up the solid curved ramp (y=5.5m, inset=0) up to ceiling (46m)
+  const profileY = [
+    ...arcAngles.map((a) => rampR * (1 - Math.cos(a))),
+    40.0,
+    43.5,
+    ARENA_BOUNDS.ceiling
+  ];
+  const profileInset = [
+    ...arcAngles.map((a) => rampR * (1 - Math.sin(a))),
+    0.0,
+    1.5,
+    3.8
+  ];
+
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
-
-  const profileY = [0, 1.4, 3.4, 6.0, 40.0, 43.5, ARENA_BOUNDS.ceiling];
-  const profileInset = [3.6, 1.9, 0.65, 0.0, 0.0, 1.2, 3.2];
 
   let accLen = 0;
   const ringCount = perim.length;
@@ -373,9 +472,8 @@ function createRoundedStadiumEnclosure(hexTex: THREE.CanvasTexture): THREE.Group
     }
     for (let j = 0; j < profCount; j++) {
       const inset = profileInset[j];
-      // Leave goal opening on lower levels at Z extremes
       const inGoalOpening =
-        Math.abs(p.z) > ARENA_BOUNDS.halfLength - 1.5 &&
+        Math.abs(p.z) > ARENA_BOUNDS.halfLength - 1.2 &&
         Math.abs(p.x) < ARENA_BOUNDS.goalHalfWidth &&
         profileY[j] < ARENA_BOUNDS.goalHeight;
       const finalInset = inGoalOpening ? -ARENA_BOUNDS.goalDepth : inset;
@@ -409,58 +507,82 @@ function createRoundedStadiumEnclosure(hexTex: THREE.CanvasTexture): THREE.Group
     color: 0x38bdf8,
     map: hexTex,
     transparent: true,
-    opacity: 0.34,
-    roughness: 0.25,
-    metalness: 0.5,
+    opacity: 0.36,
+    roughness: 0.22,
+    metalness: 0.55,
     side: THREE.DoubleSide,
     depthWrite: false
   });
-  const wallMesh = new THREE.Mesh(wallGeo, wallMat);
-  group.add(wallMesh);
+  group.add(new THREE.Mesh(wallGeo, wallMat));
 
-  // Add solid metallic curved base ramp (y = 0 to 2.5) so players see the driveable Rocket League ramp clearly
+  // Solid Metallic Curved Floor-to-Wall Ramp Block (matches `rampHeightY` in rules.ts 1-to-1!)
   const rampPositions: number[] = [];
+  const rampUvs: number[] = [];
   const rampIndices: number[] = [];
-  const rampY = [0.02, 1.2, 2.8];
-  const rampInset = [3.6, 1.4, 0.0];
+  const rampSteps = 5; // 5 arc steps from y=0.02 (inset 5.5m) to y=5.5m (inset 0m)
 
+  let rampAcc = 0;
   for (let i = 0; i < ringCount; i++) {
     const p = perim[i];
-    for (let j = 0; j < 3; j++) {
-      const inGoal =
-        Math.abs(p.z) > ARENA_BOUNDS.halfLength - 1.5 &&
-        Math.abs(p.x) < ARENA_BOUNDS.goalHalfWidth;
-      const ins = inGoal ? -ARENA_BOUNDS.goalDepth : rampInset[j];
-      rampPositions.push(p.x + p.nx * ins, rampY[j], p.z + p.nz * ins);
+    if (i > 0) {
+      rampAcc += Math.hypot(p.x - perim[i - 1].x, p.z - perim[i - 1].z);
+    }
+    const inGoal =
+      Math.abs(p.z) > ARENA_BOUNDS.halfLength - 1.2 &&
+      Math.abs(p.x) < ARENA_BOUNDS.goalHalfWidth;
+    for (let j = 0; j < rampSteps; j++) {
+      const ang = (j / (rampSteps - 1)) * (Math.PI / 2);
+      const ry = Math.max(0.03, rampR * (1 - Math.cos(ang)));
+      const rInset = inGoal ? -ARENA_BOUNDS.goalDepth : rampR * (1 - Math.sin(ang));
+      rampPositions.push(p.x + p.nx * rInset, ry, p.z + p.nz * rInset);
+      rampUvs.push(rampAcc / 40, j / (rampSteps - 1));
     }
   }
+
   for (let i = 0; i < ringCount - 1; i++) {
-    for (let j = 0; j < 2; j++) {
-      const a = i * 3 + j;
-      const b = (i + 1) * 3 + j;
-      const c = (i + 1) * 3 + (j + 1);
-      const d = i * 3 + (j + 1);
+    const pA = perim[i];
+    const pB = perim[i + 1];
+    const inGoalSeg =
+      Math.abs(pA.z) > ARENA_BOUNDS.halfLength - 1.2 &&
+      Math.abs(pA.x) < ARENA_BOUNDS.goalHalfWidth - 0.5 &&
+      Math.abs(pB.x) < ARENA_BOUNDS.goalHalfWidth - 0.5;
+    if (inGoalSeg) continue; // Keep goal mouth floor flat!
+
+    for (let j = 0; j < rampSteps - 1; j++) {
+      const a = i * rampSteps + j;
+      const b = (i + 1) * rampSteps + j;
+      const c = (i + 1) * rampSteps + (j + 1);
+      const d = i * rampSteps + (j + 1);
       rampIndices.push(a, b, d, b, c, d);
     }
   }
+
   const rampGeo = new THREE.BufferGeometry();
   rampGeo.setAttribute('position', new THREE.Float32BufferAttribute(rampPositions, 3));
+  rampGeo.setAttribute('uv', new THREE.Float32BufferAttribute(rampUvs, 2));
   rampGeo.setIndex(rampIndices);
   rampGeo.computeVertexNormals();
+
   const rampMat = new THREE.MeshStandardMaterial({
     color: 0x1e293b,
-    metalness: 0.65,
-    roughness: 0.35,
+    bumpMap: carbonTex,
+    bumpScale: 0.04,
+    metalness: 0.72,
+    roughness: 0.32,
     side: THREE.DoubleSide
   });
-  group.add(new THREE.Mesh(rampGeo, rampMat));
+  const rampMesh = new THREE.Mesh(rampGeo, rampMat);
+  rampMesh.receiveShadow = true;
+  group.add(rampMesh);
 
   return group;
 }
 
 /**
- * Builds a high-detail 12-part Rocket Octane car mesh with carbon weave, brake calipers,
- * dual intercooler intakes, transmissive glass cockpit, and bottom-center pivot flush on Y=0.
+ * Builds a high-detail 12-part Rocket Car mesh supporting 3 distinct chassis silhouettes:
+ * - `octane`: Sculpted twin-turbo aero buggy with raised rear GT wing
+ * - `dominus`: Wide low-slung V8 muscle GT with hood supercharger & twin chrome pipes
+ * - `fennec`: Boxy wide-fender rally hatchback with roof air scoop
  */
 function createRocketCarGroup(
   car: CarState,
@@ -471,6 +593,7 @@ function createRocketCarGroup(
   const bodyGroup = new THREE.Group();
   root.add(bodyGroup);
 
+  const modelType: CarModelType = car.carModel || 'octane';
   const finishParams = getFinishMaterialParams(car.finish);
   const hullMat = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(car.bodyColor),
@@ -479,19 +602,42 @@ function createRocketCarGroup(
     ...finishParams
   });
 
-  // Part 1: Primary silhouette — Sculpted aerodynamic Octane hull
+  // Part 1: Primary silhouette based on `carModel` (Octane / Dominus / Fennec)
   const hullShape = new THREE.Shape();
-  hullShape.moveTo(-1.92, 0.3);
-  hullShape.lineTo(1.92, 0.3);
-  hullShape.lineTo(1.62, 0.94);
-  hullShape.lineTo(0.4, 1.42);
-  hullShape.lineTo(-1.18, 1.35);
-  hullShape.lineTo(-2.02, 0.8);
-  hullShape.closePath();
+  if (modelType === 'dominus') {
+    // Low-slung long muscle car silhouette
+    hullShape.moveTo(-2.15, 0.26);
+    hullShape.lineTo(2.18, 0.26);
+    hullShape.lineTo(2.05, 0.78);
+    hullShape.lineTo(0.55, 0.88);
+    hullShape.lineTo(-0.15, 1.28);
+    hullShape.lineTo(-1.35, 1.24);
+    hullShape.lineTo(-2.12, 0.78);
+    hullShape.closePath();
+  } else if (modelType === 'fennec') {
+    // Boxy rally hatchback silhouette
+    hullShape.moveTo(-1.95, 0.28);
+    hullShape.lineTo(1.98, 0.28);
+    hullShape.lineTo(1.85, 0.92);
+    hullShape.lineTo(0.85, 1.02);
+    hullShape.lineTo(0.25, 1.48);
+    hullShape.lineTo(-1.55, 1.45);
+    hullShape.lineTo(-1.95, 0.85);
+    hullShape.closePath();
+  } else {
+    // Octane Z-GT aerodynamic silhouette
+    hullShape.moveTo(-1.92, 0.3);
+    hullShape.lineTo(1.92, 0.3);
+    hullShape.lineTo(1.62, 0.94);
+    hullShape.lineTo(0.4, 1.42);
+    hullShape.lineTo(-1.18, 1.35);
+    hullShape.lineTo(-2.02, 0.8);
+    hullShape.closePath();
+  }
 
   const hullGeo = new THREE.ExtrudeGeometry(hullShape, {
     steps: 2,
-    depth: 2.15,
+    depth: modelType === 'dominus' ? 2.28 : 2.15,
     bevelEnabled: true,
     bevelThickness: 0.18,
     bevelSize: 0.16,
@@ -505,39 +651,60 @@ function createRocketCarGroup(
   hullMesh.receiveShadow = true;
   bodyGroup.add(hullMesh);
 
-  // Part 2: Secondary read — Tinted Polycarbonate Cockpit Canopy
+  // Part 2: Tinted Polycarbonate Cockpit Canopy
   const canopyMat = new THREE.MeshPhysicalMaterial({
     color: 0x09101f,
-    metalness: 0.15,
-    roughness: 0.08,
+    metalness: 0.18,
+    roughness: 0.06,
     transmission: 0.72,
     thickness: 0.65,
     ior: 1.52,
     clearcoat: 1.0
   });
-  const canopyGeo = new THREE.BoxGeometry(1.64, 0.58, 1.78);
+  const canopyGeo = new THREE.BoxGeometry(
+    modelType === 'dominus' ? 1.72 : 1.64,
+    modelType === 'fennec' ? 0.64 : 0.56,
+    modelType === 'fennec' ? 2.05 : 1.78
+  );
   const canopyMesh = new THREE.Mesh(canopyGeo, canopyMat);
-  canopyMesh.position.set(0, 1.36, -0.08);
+  canopyMesh.position.set(0, modelType === 'dominus' ? 1.24 : 1.36, -0.12);
   bodyGroup.add(canopyMesh);
 
-  // Part 3: Side Turbo Air Intake Pods + Carbon Under-Chassis Diffuser
+  // Part 3: Side Turbo Air Intake Pods + Model-Specific Hood/Roof Accent
   const carbonMat = new THREE.MeshStandardMaterial({
     color: 0x1e293b,
     bumpMap: carbonTex,
     bumpScale: 0.05,
-    metalness: 0.35,
-    roughness: 0.68
+    metalness: 0.42,
+    roughness: 0.58
   });
-  const podGeo = new THREE.BoxGeometry(0.38, 0.42, 1.55);
+  const podGeo = new THREE.BoxGeometry(0.4, 0.44, 1.65);
   const leftPod = new THREE.Mesh(podGeo, carbonMat);
-  leftPod.position.set(-1.12, 0.68, -0.15);
+  leftPod.position.set(-1.14, 0.68, -0.15);
   const rightPod = new THREE.Mesh(podGeo, carbonMat);
-  rightPod.position.set(1.12, 0.68, -0.15);
+  rightPod.position.set(1.14, 0.68, -0.15);
   bodyGroup.add(leftPod, rightPod);
 
+  if (modelType === 'dominus') {
+    // Chrome V8 Supercharger Blower on the front hood
+    const blowerMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      metalness: 0.95,
+      roughness: 0.12
+    });
+    const blower = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.32, 0.85), blowerMat);
+    blower.position.set(0, 1.12, 0.95);
+    bodyGroup.add(blower);
+  } else if (modelType === 'fennec') {
+    // Rally Roof Air Scoop
+    const scoop = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.24, 0.72), carbonMat);
+    scoop.position.set(0, 1.62, 0.15);
+    bodyGroup.add(scoop);
+  }
+
   // Part 4: Dual-Plane Rear GT Downforce Wing Spoiler
-  const spoilerBlade = new THREE.Mesh(new THREE.BoxGeometry(2.42, 0.12, 0.62), carbonMat);
-  spoilerBlade.position.set(0, 1.68, -1.8);
+  const spoilerBlade = new THREE.Mesh(new THREE.BoxGeometry(2.44, 0.12, 0.64), carbonMat);
+  spoilerBlade.position.set(0, modelType === 'dominus' ? 1.44 : 1.68, -1.82);
   spoilerBlade.rotation.x = 0.24;
   bodyGroup.add(spoilerBlade);
 
@@ -554,25 +721,25 @@ function createRocketCarGroup(
     metalness: 0.85,
     roughness: 0.2,
     emissive: car.team === 'blue' ? 0x0284c7 : 0xea580c,
-    emissiveIntensity: 0.4
+    emissiveIntensity: 0.45
   });
-  const trimMesh = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.22, 0.48), trimMat);
-  trimMesh.position.set(0, 0.46, 2.02);
+  const trimMesh = new THREE.Mesh(new THREE.BoxGeometry(2.22, 0.22, 0.5), trimMat);
+  trimMesh.position.set(0, 0.46, 2.04);
   bodyGroup.add(trimMesh);
 
   // Part 6: LatheGeometry Rear Rocket Thruster Bell + Plasma Afterburner Core
   const lathePoints = [
     new THREE.Vector2(0.22, 0),
-    new THREE.Vector2(0.4, 0.26),
-    new THREE.Vector2(0.48, 0.58),
-    new THREE.Vector2(0.34, 0.68)
+    new THREE.Vector2(0.42, 0.26),
+    new THREE.Vector2(0.5, 0.58),
+    new THREE.Vector2(0.36, 0.68)
   ];
   const nozzleGeo = new THREE.LatheGeometry(lathePoints, 18);
   nozzleGeo.rotateX(Math.PI / 2);
   const nozzleMat = new THREE.MeshStandardMaterial({
     color: 0x94a3b8,
     metalness: 0.94,
-    roughness: 0.2
+    roughness: 0.18
   });
   const nozzleMesh = new THREE.Mesh(nozzleGeo, nozzleMat);
   nozzleMesh.position.set(0, 0.72, -2.28);
@@ -581,22 +748,22 @@ function createRocketCarGroup(
   const flameMat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(car.boostColor),
     transparent: true,
-    opacity: 0.92
+    opacity: 0.94
   });
-  const flameGeo = new THREE.ConeGeometry(0.36, 1.75, 14);
+  const flameGeo = new THREE.ConeGeometry(0.38, 1.85, 14);
   flameGeo.rotateX(-Math.PI / 2);
   const thrusterFlame = new THREE.Mesh(flameGeo, flameMat);
-  thrusterFlame.position.set(0, 0.72, -2.95);
+  thrusterFlame.position.set(0, 0.72, -2.98);
   thrusterFlame.visible = false;
   bodyGroup.add(thrusterFlame);
 
   // Part 7: Twin LED Headlights + Rear Brake Light Strip + Bot Telegraph Beacon
   const headlightMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
-  const hlGeo = new THREE.BoxGeometry(0.38, 0.16, 0.1);
+  const hlGeo = new THREE.BoxGeometry(0.4, 0.16, 0.1);
   const hlLeft = new THREE.Mesh(hlGeo, headlightMat);
-  hlLeft.position.set(-0.7, 0.76, 2.1);
+  hlLeft.position.set(-0.7, 0.76, 2.12);
   const hlRight = new THREE.Mesh(hlGeo, headlightMat);
-  hlRight.position.set(0.7, 0.76, 2.1);
+  hlRight.position.set(0.7, 0.76, 2.12);
   bodyGroup.add(hlLeft, hlRight);
 
   const telegraphMat = new THREE.MeshBasicMaterial({
@@ -608,15 +775,15 @@ function createRocketCarGroup(
   telegraphBeacon.position.set(0, 1.85, 0);
   bodyGroup.add(telegraphBeacon);
 
-  // Parts 8-11: Four Composite Wheel Assemblies (Grooved Rubber Tire + Metallic Spoked Rim + Brake Disc)
+  // Parts 8-11: Four Composite Wheel Assemblies (Grooved Rubber Tire + Metallic Spoked Rim + Brake Caliper)
   const tireGeo = new THREE.CylinderGeometry(0.58, 0.58, 0.48, 24);
   tireGeo.rotateZ(Math.PI / 2);
   const tireMat = new THREE.MeshStandardMaterial({
     color: 0x0f172a,
     bumpMap: carbonTex,
     bumpScale: 0.06,
-    metalness: 0.12,
-    roughness: 0.85
+    metalness: 0.15,
+    roughness: 0.82
   });
 
   const rimColor =
@@ -625,31 +792,47 @@ function createRocketCarGroup(
       : car.wheelStyle === 'cyber_blade'
       ? 0x38bdf8
       : 0xe2e8f0;
-  const rimGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.51, 14);
+  const rimGeo = new THREE.CylinderGeometry(0.39, 0.39, 0.52, 16);
   rimGeo.rotateZ(Math.PI / 2);
   const rimMat = new THREE.MeshStandardMaterial({
     color: rimColor,
-    metalness: 0.94,
-    roughness: 0.16,
-    emissive: car.wheelStyle === 'cyber_blade' ? 0x0284c7 : 0x000000,
-    emissiveIntensity: car.wheelStyle === 'cyber_blade' ? 0.55 : 0
+    metalness: 0.95,
+    roughness: 0.14,
+    emissive:
+      car.wheelStyle === 'cyber_blade'
+        ? 0x0284c7
+        : car.wheelStyle === 'turbine_gold'
+        ? 0xb45309
+        : 0x000000,
+    emissiveIntensity: car.wheelStyle === 'aero_apex' ? 0 : 0.48
   });
 
+  const caliperMat = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    metalness: 0.6,
+    roughness: 0.3
+  });
+  const caliperGeo = new THREE.BoxGeometry(0.52, 0.22, 0.18);
+
   const wheelOffsets: Array<[number, number, number]> = [
-    [-1.2, 0.58, 1.34],
-    [1.2, 0.58, 1.34],
-    [-1.24, 0.6, -1.34],
-    [1.24, 0.6, -1.34]
+    [-1.22, 0.58, 1.34],
+    [1.22, 0.58, 1.34],
+    [-1.26, 0.6, -1.34],
+    [1.26, 0.6, -1.34]
   ];
   const wheels: THREE.Object3D[] = [];
+  const rimMeshes: THREE.Mesh[] = [];
   wheelOffsets.forEach(([wx, wy, wz]) => {
     const wGroup = new THREE.Group();
     wGroup.position.set(wx, wy, wz);
     const tire = new THREE.Mesh(tireGeo, tireMat);
     const rim = new THREE.Mesh(rimGeo, rimMat);
-    wGroup.add(tire, rim);
+    const caliper = new THREE.Mesh(caliperGeo, caliperMat);
+    caliper.position.set(0, 0.15, 0.12);
+    wGroup.add(tire, rim, caliper);
     bodyGroup.add(wGroup);
     wheels.push(wGroup);
+    rimMeshes.push(rim);
   });
 
   // Part 12: Soft Radial Contact Shadow Disc flush at y = 0.015
@@ -658,7 +841,7 @@ function createRocketCarGroup(
   const shadowMat = new THREE.MeshBasicMaterial({
     map: shadowTex,
     transparent: true,
-    opacity: 0.54,
+    opacity: 0.56,
     depthWrite: false
   });
   const contactShadow = new THREE.Mesh(shadowGeo, shadowMat);
@@ -673,14 +856,12 @@ function createRocketCarGroup(
     thrusterFlame,
     telegraphBeacon,
     wheels,
-    contactShadow
+    rimMeshes,
+    contactShadow,
+    builtModel: modelType
   };
 }
 
-/**
- * Builds a high-detail 5-part Geodesic Rocket League Arena Ball with metallic panels,
- * glowing equatorial energy seam, and pitch projection ring.
- */
 function createArenaBallGroup(
   shadowTex: THREE.CanvasTexture,
   carbonTex: THREE.CanvasTexture
@@ -692,13 +873,12 @@ function createArenaBallGroup(
 } {
   const ballRoot = new THREE.Group();
 
-  // Part 1: Brushed metallic sphere with subtle surface relief
   const coreMat = new THREE.MeshStandardMaterial({
     color: 0xe2e8f0,
     bumpMap: carbonTex,
-    bumpScale: 0.03,
-    metalness: 0.68,
-    roughness: 0.22
+    bumpScale: 0.035,
+    metalness: 0.72,
+    roughness: 0.2
   });
   const coreMesh = new THREE.Mesh(
     new THREE.IcosahedronGeometry(ARENA_BOUNDS.ballRadius * 0.96, 3),
@@ -708,11 +888,10 @@ function createArenaBallGroup(
   coreMesh.receiveShadow = true;
   ballRoot.add(coreMesh);
 
-  // Part 2: Outer geodesic structural cage
   const cageMat = new THREE.MeshStandardMaterial({
     color: 0x0f172a,
-    metalness: 0.45,
-    roughness: 0.65,
+    metalness: 0.5,
+    roughness: 0.6,
     wireframe: true
   });
   const cageMesh = new THREE.Mesh(
@@ -721,7 +900,6 @@ function createArenaBallGroup(
   );
   ballRoot.add(cageMesh);
 
-  // Part 3: Equatorial pulsing energy torus
   const ringMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
   const equatorRing = new THREE.Mesh(
     new THREE.TorusGeometry(ARENA_BOUNDS.ballRadius * 0.99, 0.085, 12, 36),
@@ -729,12 +907,10 @@ function createArenaBallGroup(
   );
   ballRoot.add(equatorRing);
 
-  // Part 4: Polar beacon caps
   const capGeo = new THREE.CylinderGeometry(0.58, 0.58, ARENA_BOUNDS.ballRadius * 2.02, 18);
   const capMesh = new THREE.Mesh(capGeo, ringMat);
   ballRoot.add(capMesh);
 
-  // Part 5: Ground projection ring + soft radial shadow disc at y = 0.02
   const groundIndicator = new THREE.Group();
   const shadowDiscGeo = new THREE.CircleGeometry(3.5, 24);
   shadowDiscGeo.rotateX(-Math.PI / 2);
@@ -777,11 +953,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   onHudUpdate,
   onMatchFinished,
   onPauseRequested,
+  garageFocusTarget = 'overview',
+  graphicsSettings = DEFAULT_GRAPHICS_SETTINGS,
+  generalSettings = DEFAULT_GENERAL_SETTINGS,
   playerCosmetics
 }) => {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
-  // Store latest props/callbacks in refs so WebGL scene never tears down on React state updates
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
 
@@ -803,8 +982,30 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   const onPauseRequestedRef = useRef(onPauseRequested);
   onPauseRequestedRef.current = onPauseRequested;
 
+  const garageFocusRef = useRef<GarageFocusTarget>(garageFocusTarget);
+  garageFocusRef.current = garageFocusTarget;
+
+  const graphicsRef = useRef<GraphicsSettingsState>(graphicsSettings);
+  graphicsRef.current = graphicsSettings;
+
+  const generalRef = useRef<GeneralSettingsState>(generalSettings);
+  generalRef.current = generalSettings;
+
   const cosmeticsRef = useRef(playerCosmetics);
   cosmeticsRef.current = playerCosmetics;
+
+  // Apply dynamic resolution scale & shadow settings whenever `graphicsSettings` changes
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const isHeadless =
+      navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent);
+    const scaleNum = parseFloat(graphicsSettings.resolutionScale) || 1.0;
+    renderer.setPixelRatio(
+      isHeadless ? 1 : Math.min(window.devicePixelRatio * scaleNum, 2.25)
+    );
+    renderer.shadowMap.enabled = !isHeadless && graphicsSettings.shadows;
+  }, [graphicsSettings]);
 
   useEffect(() => {
     const mountEl = canvasMountRef.current;
@@ -814,14 +1015,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent);
 
     const renderer = new THREE.WebGLRenderer({
-      antialias: !isHeadless,
+      antialias: !isHeadless && graphicsRef.current.antiAliasing,
       powerPreference: 'high-performance'
     });
+    rendererRef.current = renderer;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.14;
-    renderer.setPixelRatio(isHeadless ? 1 : Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = !isHeadless;
+    renderer.toneMappingExposure = 1.15;
+    const initScale = parseFloat(graphicsRef.current.resolutionScale) || 1.0;
+    renderer.setPixelRatio(
+      isHeadless ? 1 : Math.min(window.devicePixelRatio * initScale, 2.25)
+    );
+    renderer.shadowMap.enabled = !isHeadless && graphicsRef.current.shadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const initialRect = mountEl.getBoundingClientRect();
@@ -834,7 +1039,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const scene = new THREE.Scene();
     const horizonColor = new THREE.Color(0x070d19);
     scene.background = horizonColor;
-    scene.fog = new THREE.FogExp2(0x070d19, 0.0034);
+    scene.fog = new THREE.FogExp2(0x070d19, 0.0032);
 
     if (!isHeadless) {
       const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -842,16 +1047,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       pmremGenerator.dispose();
     }
 
-    const camera = new THREE.PerspectiveCamera(62, initW / initH, 0.2, 420);
+    const camera = new THREE.PerspectiveCamera(
+      generalRef.current.cameraFov,
+      initW / initH,
+      0.2,
+      420
+    );
     camera.position.set(-7.2, 5.4, -38.5);
     camera.lookAt(0, 1.8, -12);
 
-    // 3-Point Warm/Cool Studio Stadium Lighting
-    const hemiLight = new THREE.HemisphereLight(0x60a5fa, 0x0f172a, 0.98);
+    const hemiLight = new THREE.HemisphereLight(0x60a5fa, 0x0f172a, 1.02);
     hemiLight.position.set(0, 60, 0);
     scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfff3e0, 2.25);
+    const keyLight = new THREE.DirectionalLight(0xfff3e0, 2.3);
     keyLight.position.set(38, 64, -24);
     if (!isHeadless) {
       keyLight.castShadow = true;
@@ -869,18 +1078,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     }
     scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.9);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.95);
     rimLight.position.set(-42, 35, 48);
     scene.add(rimLight);
 
-    // Pitch & Procedural PBR Textures
     const maxAniso = renderer.capabilities.getMaxAnisotropy();
     const { albedoMap, bumpMap } = createPitchTextures(maxAniso, isHeadless);
     const hexWallTex = createHexWallTexture();
     const carbonTex = createCarbonWeaveTexture();
     const shadowTex = createRadialShadowTexture();
 
-    // Extended outdoor ground terrain beyond stadium bowl
     const outerTerrainGeo = new THREE.PlaneGeometry(460, 460);
     outerTerrainGeo.rotateX(-Math.PI / 2);
     const outerTerrainMat = new THREE.MeshStandardMaterial({
@@ -892,7 +1099,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     outerTerrain.position.y = -0.08;
     scene.add(outerTerrain);
 
-    // Main Pitch Turf
     const pitchGeo = new THREE.PlaneGeometry(
       ARENA_BOUNDS.halfWidth * 2,
       ARENA_BOUNDS.halfLength * 2
@@ -903,18 +1109,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       map: albedoMap,
       bumpMap,
       bumpScale: 0.08,
-      roughness: 0.76,
-      metalness: 0.08
+      roughness: 0.74,
+      metalness: 0.1
     });
     const pitchMesh = new THREE.Mesh(pitchGeo, pitchMat);
     pitchMesh.receiveShadow = true;
     scene.add(pitchMesh);
 
-    // Rounded Rocket League Stadium Enclosure (Curved Floor-to-Wall Ramps + Hex Glass Cage + Ceiling Curve)
-    const roundedEnclosure = createRoundedStadiumEnclosure(hexWallTex);
+    const roundedEnclosure = createRoundedStadiumEnclosure(hexWallTex, carbonTex);
     scene.add(roundedEnclosure);
 
-    // Goal Frames: Blue (-Z) & Orange (+Z)
     const createGoalAssembly = (zPos: number, colorHex: number) => {
       const gGroup = new THREE.Group();
       const frameMat = new THREE.MeshStandardMaterial({
@@ -967,7 +1171,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       createGoalAssembly(ARENA_BOUNDS.halfLength, 0xf97316)
     );
 
-    // High-Altitude Stadium Ceiling Energy Grid (46m high for ceiling cling & shots)
     const ceilingGrid = new THREE.GridHelper(
       ARENA_BOUNDS.halfLength * 2,
       18,
@@ -980,7 +1183,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     ceilingMat.opacity = 0.28;
     scene.add(ceilingGrid);
 
-    // InstancedMesh: Stadium Architectural Rib Pillars & Floodlight Towers (28 instances)
     const towerCount = 28;
     const towerGeo = new THREE.BoxGeometry(2.8, 38, 4.2);
     const towerMat = new THREE.MeshStandardMaterial({
@@ -1026,7 +1228,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     beaconInstanced.computeBoundingSphere();
     scene.add(towerInstanced, beaconInstanced);
 
-    // InstancedMesh: Boost Pads (22 pads)
     const padCount = arenaStateRef.current.boostPads.length;
     const padOrbGeo = new THREE.OctahedronGeometry(0.95, 1);
     const padOrbMat = new THREE.MeshStandardMaterial({
@@ -1040,7 +1241,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     boostInstanced.frustumCulled = false;
     scene.add(boostInstanced);
 
-    // Zero-GC Pooled Particle Ring Buffer (120 instances)
     const PARTICLE_POOL_SIZE = 120;
     const particleGeo = new THREE.IcosahedronGeometry(0.28, 0);
     const particleMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -1076,8 +1276,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       hexColor: string | number,
       size = 1.0
     ) => {
+      const pMult =
+        graphicsRef.current.particles === 'low'
+          ? 0.35
+          : graphicsRef.current.particles === 'medium'
+          ? 0.7
+          : 1.0;
+      const finalCount = Math.max(1, Math.round(count * pMult));
       _dummyColor.set(hexColor);
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < finalCount; i++) {
         const p = particles[particleCursor];
         particleCursor = (particleCursor + 1) % PARTICLE_POOL_SIZE;
         p.active = true;
@@ -1100,12 +1307,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     };
     scene.add(particleInstanced);
 
-    // Create Ball Group
     const { ballRoot, coreMesh, equatorRing, groundIndicator } =
       createArenaBallGroup(shadowTex, carbonTex);
     scene.add(ballRoot, groundIndicator);
 
-    // Map of Car Meshes by car.id
     const carMeshes = new Map<string, CarMeshRig>();
     const syncCarMeshes = (cars: CarState[]) => {
       const activeIds = new Set(cars.map((c) => c.id));
@@ -1116,6 +1321,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
       for (const car of cars) {
+        const existing = carMeshes.get(car.id);
+        const desiredModel = car.carModel || 'octane';
+        if (existing && existing.builtModel !== desiredModel) {
+          scene.remove(existing.root);
+          carMeshes.delete(car.id);
+        }
         if (!carMeshes.has(car.id)) {
           const rig = createRocketCarGroup(car, shadowTex, carbonTex);
           scene.add(rig.root);
@@ -1125,7 +1336,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     };
     syncCarMeshes(arenaStateRef.current.cars);
 
-    // Keyboard & Mouse Input Listeners (Supporting Customizable KeyBindings + Right/Left Mouse Clicks)
     const keysHeld = new Set<string>();
     const keysJustPressed = new Set<string>();
     let pointerNormX = 0;
@@ -1236,7 +1446,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     });
     resizeObserver.observe(mountEl);
 
-    // Animation & Physics Loop State
     const clock = new THREE.Clock();
     let rafId = 0;
     let headlessTimerId = 0;
@@ -1258,15 +1467,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const elapsed = clock.getElapsedTime();
 
       const state = arenaStateRef.current;
-      syncCarMeshes(state.cars);
 
-      // Keep player 1 cosmetics synced live from Garage / Market
+      // Sync player 1 cosmetics live from Garage / Market
       const playerCar = state.cars[0];
       if (playerCar) {
+        playerCar.carModel = cosmeticsRef.current.carModel || 'octane';
         playerCar.bodyColor = cosmeticsRef.current.bodyColor;
         playerCar.finish = cosmeticsRef.current.finish;
         playerCar.boostColor = cosmeticsRef.current.boostColor;
         playerCar.wheelStyle = cosmeticsRef.current.wheelStyle;
+      }
+
+      syncCarMeshes(state.cars);
+
+      if (playerCar) {
         const pRig = carMeshes.get(playerCar.id);
         if (pRig) {
           const mat = pRig.hullMesh.material as THREE.MeshPhysicalMaterial;
@@ -1279,11 +1493,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           (pRig.thrusterFlame.material as THREE.MeshBasicMaterial).color.set(
             playerCar.boostColor
           );
+          const rimHex =
+            playerCar.wheelStyle === 'turbine_gold'
+              ? 0xf59e0b
+              : playerCar.wheelStyle === 'cyber_blade'
+              ? 0x38bdf8
+              : 0xe2e8f0;
+          for (const rm of pRig.rimMeshes) {
+            const rMat = rm.material as THREE.MeshStandardMaterial;
+            rMat.color.setHex(rimHex);
+          }
         }
       }
 
       if (gameStateRef.current === 'playing') {
-        if (state.timeRemaining > 0) {
+        if (!state.matchEnded) {
           matchFinishTriggered = false;
         }
 
@@ -1322,7 +1546,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const events = stepArenaPhysics(state, input, dt);
         keysJustPressed.clear();
 
-        // Record Replay Frames (~15Hz or immediately on key match events)
         const hasMajorEvent = Boolean(
           events.goalScored || events.carDemolished || events.saveMade
         );
@@ -1330,7 +1553,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           lastReplayCapture = nowMs;
           let eventLabel: string | undefined;
           if (events.goalScored) {
-            eventLabel = `GOL (${state.lastScorerName || 'Takım'})`;
+            eventLabel = state.isOvertime
+              ? `ALTIN GOL (${state.lastScorerName || 'Takım'})`
+              : `GOL (${state.lastScorerName || 'Takım'})`;
           } else if (events.carDemolished) {
             eventLabel = `PATLATMA (${events.carDemolished.attacker} -> ${events.carDemolished.victim})`;
           } else if (events.saveMade) {
@@ -1369,7 +1594,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        // Trigger Audio + Shake + Particles
         if (events.jumped && playerCar) {
           soundEngine.playJump();
           spawnParticles(
@@ -1459,7 +1683,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           );
         }
 
-        // Continuous nitro exhaust particles when boosting
         for (const c of state.cars) {
           if (c.demolishedTimer > 0) continue;
           const cSpeed = Math.hypot(c.velocity.x, c.velocity.y, c.velocity.z);
@@ -1470,12 +1693,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        // Check match timer completion
-        if (
-          state.mode !== 'practice' &&
-          state.timeRemaining <= 0 &&
-          !matchFinishTriggered
-        ) {
+        // Trigger match end ONLY when `state.matchEnded` is true (never on a tie!)
+        if (state.mode !== 'practice' && state.matchEnded && !matchFinishTriggered) {
           matchFinishTriggered = true;
           onMatchFinishedRef.current(state);
         }
@@ -1492,6 +1711,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
           const safeIdx = Math.max(0, Math.min(frames.length - 1, rCtrl.frameIndex));
           applyReplayFrameToArena(state, frames[safeIdx]);
+        }
+      } else if (gameStateRef.current === 'title' && playerCar) {
+        // In Garage boost preview mode, fire nitro particles live behind the car!
+        if (garageFocusRef.current === 'boost' && Math.random() < 0.7) {
+          const backX = playerCar.position.x - Math.sin(playerCar.yaw) * 2.5;
+          const backZ = playerCar.position.z - Math.cos(playerCar.yaw) * 2.5;
+          spawnParticles(backX, playerCar.position.y + 0.72, backZ, 2, 7, playerCar.boostColor, 0.9);
         }
       }
 
@@ -1516,20 +1742,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         );
 
         const carSpeed = Math.hypot(car.velocity.x, car.velocity.y, car.velocity.z);
-        rig.thrusterFlame.visible = carSpeed > 20 || car.supersonic || car.position.y > 2.5;
+        const isGarageBoostPreview =
+          gameStateRef.current === 'title' &&
+          car.id === 'player_1' &&
+          garageFocusRef.current === 'boost';
+        rig.thrusterFlame.visible =
+          isGarageBoostPreview || carSpeed > 20 || car.supersonic || car.position.y > 2.5;
         if (rig.thrusterFlame.visible) {
           rig.thrusterFlame.scale.set(
             1,
             1,
-            0.85 + Math.sin(elapsed * 38) * 0.25 + (car.supersonic ? 0.6 : 0)
+            0.95 + Math.sin(elapsed * 38) * 0.25 + (car.supersonic || isGarageBoostPreview ? 0.65 : 0)
           );
         }
 
         const beaconMat = rig.telegraphBeacon.material as THREE.MeshBasicMaterial;
         beaconMat.opacity = car.telegraphTimer > 0.05 ? 0.85 : 0;
 
+        const spinSpeed =
+          gameStateRef.current === 'title' && garageFocusRef.current === 'wheels'
+            ? 4.5
+            : carSpeed * 0.6;
         for (const w of rig.wheels) {
-          w.rotation.x += carSpeed * dt * 0.6;
+          w.rotation.x += spinSpeed * dt;
         }
       }
 
@@ -1555,7 +1790,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const heightRatio = Math.max(0.3, 1 - (b.position.y - b.radius) / 42);
       groundIndicator.scale.setScalar(heightRatio);
 
-      // Update Instanced Boost Pads
       for (let i = 0; i < state.boostPads.length; i++) {
         const pad = state.boostPads[i];
         const scale = pad.active ? (pad.isFull ? 1.25 : 0.65) : 0.001;
@@ -1572,7 +1806,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }
       boostInstanced.instanceMatrix.needsUpdate = true;
 
-      // Update Zero-GC Pooled Particles
       for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
         const p = particles[i];
         if (!p.active) {
@@ -1604,18 +1837,57 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         particleInstanced.instanceColor.needsUpdate = true;
       }
 
-      // Camera Choreography
+      // Camera Choreography (including Garage Part-Zoom Focus!)
       if (gameStateRef.current === 'title') {
         const carX = playerCar ? playerCar.position.x : 0;
+        const carY = playerCar ? playerCar.position.y : 0;
         const carZ = playerCar ? playerCar.position.z : -50;
-        const sway = Math.sin(elapsed * 0.45) * 4.2 + pointerNormX * 3.5;
-        _camDesired.set(
-          carX - 6.8 + sway,
-          5.3 + pointerNormY * -1.1,
-          carZ - 10.5 + Math.cos(elapsed * 0.45) * 1.8
-        );
-        _camLookTarget.set(carX * 0.5, 1.8, carZ + 22);
-        const camDamp = 1 - Math.exp(-5.0 * dt);
+        const focus = garageFocusRef.current;
+
+        if (focus === 'wheels') {
+          // Zoom directly onto the front/side wheel rim & caliper
+          _camDesired.set(
+            carX - 3.0 + Math.sin(elapsed * 0.6) * 0.25,
+            carY + 0.95,
+            carZ + 1.0 + Math.cos(elapsed * 0.6) * 0.35
+          );
+          _camLookTarget.set(carX - 1.1, carY + 0.6, carZ + 0.2);
+        } else if (focus === 'boost') {
+          // Swing behind the rear rocket exhaust nozzle to showcase the live nitro flame
+          _camDesired.set(
+            carX + 1.65 + Math.sin(elapsed * 0.5) * 0.4,
+            carY + 1.35,
+            carZ - 4.4
+          );
+          _camLookTarget.set(carX, carY + 0.72, carZ - 2.2);
+        } else if (focus === 'finish') {
+          // Zoom onto hood/roof clearcoat reflection
+          _camDesired.set(
+            carX - 3.6 + Math.sin(elapsed * 0.4) * 0.6,
+            carY + 2.45,
+            carZ + 2.8
+          );
+          _camLookTarget.set(carX, carY + 1.05, carZ + 0.1);
+        } else if (focus === 'body') {
+          // Showroom 3/4 orbit around the car chassis
+          const ang = elapsed * 0.35;
+          _camDesired.set(
+            carX - Math.cos(ang) * 5.2,
+            carY + 2.05,
+            carZ + Math.sin(ang) * 5.2
+          );
+          _camLookTarget.set(carX, carY + 0.95, carZ);
+        } else {
+          // Lobby Overview
+          const sway = Math.sin(elapsed * 0.45) * 4.2 + pointerNormX * 3.5;
+          _camDesired.set(
+            carX - 6.8 + sway,
+            5.3 + pointerNormY * -1.1,
+            carZ - 10.5 + Math.cos(elapsed * 0.45) * 1.8
+          );
+          _camLookTarget.set(carX * 0.5, 1.8, carZ + 22);
+        }
+        const camDamp = 1 - Math.exp(-6.5 * dt);
         camera.position.lerp(_camDesired, camDamp);
         camera.lookAt(_camLookTarget);
       } else if (gameStateRef.current === 'replay' && playerCar) {
@@ -1644,6 +1916,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         camera.position.lerp(_camDesired, camDamp);
         camera.lookAt(_camLookTarget);
       } else if (playerCar) {
+        const camDist = generalRef.current.cameraDistance || 12;
         const camDamp = 1 - Math.exp(-9.5 * dt);
         if (ballCamRef.current) {
           _vec3A.set(
@@ -1657,9 +1930,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             _vec3A.normalize();
           }
           _camDesired.set(
-            playerCar.position.x - _vec3A.x * 12,
+            playerCar.position.x - _vec3A.x * camDist,
             playerCar.position.y + 4.6,
-            playerCar.position.z - _vec3A.z * 12
+            playerCar.position.z - _vec3A.z * camDist
           );
           _camLookTarget.set(
             b.position.x * 0.65 + playerCar.position.x * 0.35,
@@ -1670,9 +1943,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const fwdX = Math.sin(playerCar.yaw);
           const fwdZ = Math.cos(playerCar.yaw);
           _camDesired.set(
-            playerCar.position.x - fwdX * 12,
+            playerCar.position.x - fwdX * camDist,
             playerCar.position.y + 4.6,
-            playerCar.position.z - fwdZ * 12
+            playerCar.position.z - fwdZ * camDist
           );
           _camLookTarget.set(
             playerCar.position.x + fwdX * 14,
@@ -1681,7 +1954,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           );
         }
 
-        // Clamp camera inside enlarged stadium bounds & 46m ceiling
         _camDesired.x = THREE.MathUtils.clamp(
           _camDesired.x,
           -ARENA_BOUNDS.halfWidth + 2.2,
@@ -1700,14 +1972,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         camera.position.lerp(_camDesired, camDamp);
 
-        if (cameraTrauma > 0) {
+        if (cameraTrauma > 0 && generalRef.current.cameraShake) {
           const shake = cameraTrauma * cameraTrauma * 0.65;
           camera.position.x += (Math.random() * 2 - 1) * shake;
           camera.position.y += (Math.random() * 2 - 1) * shake;
           cameraTrauma = Math.max(0, cameraTrauma - dt * 2.4);
+        } else {
+          cameraTrauma = 0;
         }
 
-        const targetFov = playerCar.supersonic ? 76 : 65;
+        const baseFov = generalRef.current.cameraFov || 68;
+        const targetFov = playerCar.supersonic ? baseFov + 10 : baseFov;
         camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, camDamp);
         camera.updateProjectionMatrix();
 
@@ -1717,7 +1992,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       renderer.render(scene, camera);
 
-      // Throttle React HUD state updates to <= 10Hz
       if (nowMs - lastHudEmit > 100 && playerCar) {
         lastHudEmit = nowMs;
         const speedRaw = Math.hypot(
@@ -1729,6 +2003,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           blueScore: state.blueScore,
           orangeScore: state.orangeScore,
           timeRemaining: state.timeRemaining,
+          isOvertime: Boolean(state.isOvertime),
+          overtimeElapsed: state.overtimeElapsed || 0,
           boost: Math.round(playerCar.boost),
           speedKmh: Math.round(speedRaw * 3.2),
           altitude: Math.round(playerCar.position.y),
@@ -1740,7 +2016,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             state.goalResetTimer > 0 && state.lastScoringTeam
               ? {
                   team: state.lastScoringTeam,
-                  scorer: state.lastScorerName || 'Oyuncu'
+                  scorer: state.lastScorerName || 'Oyuncu',
+                  isGoldenGoal: Boolean(state.isOvertime)
                 }
               : null,
           demolitionBanner: state.lastDemolitionBanner

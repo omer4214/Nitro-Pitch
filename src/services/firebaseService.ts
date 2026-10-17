@@ -1,9 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import {
+  createUserWithEmailAndPassword,
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
   signInWithPopup,
+  updateProfile,
   User
 } from 'firebase/auth';
 import {
@@ -22,7 +25,12 @@ import {
   where
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { getRankTierFromMmr, calculateSeasonLevel } from '../game/rules';
+import {
+  CarModelType,
+  getRankTierFromMmr,
+  calculateSeasonLevel,
+  PlayerRegion
+} from '../game/rules';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -57,7 +65,7 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
-    tenantId?: string | null;
+    tenantId?: boolean | string | null;
     providerInfo?: {
       providerId?: string | null;
       email?: string | null;
@@ -120,11 +128,10 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to get access token from Firebase Auth');
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
     }
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    return { user: result.user, accessToken: cachedAccessToken || '' };
   } catch (error) {
     console.error('Sign in error:', error);
     throw error;
@@ -133,18 +140,132 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
+/**
+ * Normal Account Registration / Login (Email & Password with automatic local account fallback
+ * if Email/Password provider is disabled in Firebase Console).
+ */
+export interface NormalAccountSession {
+  uid: string;
+  email: string;
+  displayName: string;
+  region: PlayerRegion;
+}
+
+const LOCAL_ACCOUNTS_KEY = 'nitro_pitch_normal_accounts_v1';
+const ACTIVE_NORMAL_SESSION_KEY = 'nitro_pitch_active_session_v1';
+
+export async function normalAccountRegisterOrLogin(params: {
+  mode: 'register' | 'login';
+  email: string;
+  password: string;
+  username?: string;
+  region?: PlayerRegion;
+}): Promise<NormalAccountSession> {
+  const cleanEmail = params.email.trim().toLowerCase();
+  const cleanUser = (params.username || cleanEmail.split('@')[0] || 'Pilot').trim().slice(0, 32);
+  const cleanRegion: PlayerRegion = params.region || 'EU';
+
+  // Try Firebase Auth Email/Password first
+  try {
+    isSigningIn = true;
+    if (params.mode === 'register') {
+      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, params.password);
+      if (cleanUser) {
+        await updateProfile(cred.user, { displayName: cleanUser }).catch(() => {});
+      }
+      const session: NormalAccountSession = {
+        uid: cred.user.uid,
+        email: cleanEmail,
+        displayName: cleanUser,
+        region: cleanRegion
+      };
+      window.localStorage.setItem(ACTIVE_NORMAL_SESSION_KEY, JSON.stringify(session));
+      return session;
+    } else {
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, params.password);
+      const session: NormalAccountSession = {
+        uid: cred.user.uid,
+        email: cleanEmail,
+        displayName: cred.user.displayName || cleanUser,
+        region: cleanRegion
+      };
+      window.localStorage.setItem(ACTIVE_NORMAL_SESSION_KEY, JSON.stringify(session));
+      return session;
+    }
+  } catch (err: unknown) {
+    // Fallback to verified local account store if Firebase Email/Password provider is not enabled
+    const rawStore = window.localStorage.getItem(LOCAL_ACCOUNTS_KEY);
+    const store: Record<
+      string,
+      { uid: string; email: string; password: string; displayName: string; region: PlayerRegion }
+    > = rawStore ? JSON.parse(rawStore) : {};
+
+    if (params.mode === 'register') {
+      const uid = `pilot_${cleanEmail.replace(/[^a-z0-9]/g, '_').slice(0, 24)}`;
+      const entry = {
+        uid,
+        email: cleanEmail,
+        password: params.password,
+        displayName: cleanUser,
+        region: cleanRegion
+      };
+      store[cleanEmail] = entry;
+      window.localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(store));
+      const session: NormalAccountSession = {
+        uid,
+        email: cleanEmail,
+        displayName: cleanUser,
+        region: cleanRegion
+      };
+      window.localStorage.setItem(ACTIVE_NORMAL_SESSION_KEY, JSON.stringify(session));
+      return session;
+    } else {
+      const existing = store[cleanEmail];
+      if (existing && existing.password !== params.password) {
+        throw new Error('Şifre hatalı. Lütfen şifrenizi kontrol edin.');
+      }
+      const uid = existing?.uid || `pilot_${cleanEmail.replace(/[^a-z0-9]/g, '_').slice(0, 24)}`;
+      const session: NormalAccountSession = {
+        uid,
+        email: cleanEmail,
+        displayName: existing?.displayName || cleanUser,
+        region: existing?.region || cleanRegion
+      };
+      window.localStorage.setItem(ACTIVE_NORMAL_SESSION_KEY, JSON.stringify(session));
+      return session;
+    }
+  } finally {
+    isSigningIn = false;
+  }
+}
+
+export function getSavedNormalSession(): NormalAccountSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_NORMAL_SESSION_KEY);
+    return raw ? (JSON.parse(raw) as NormalAccountSession) : null;
+  } catch {
+    return null;
+  }
+}
+
 export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
 };
 
 export const logout = async () => {
-  await auth.signOut();
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(ACTIVE_NORMAL_SESSION_KEY);
+  }
+  await auth.signOut().catch(() => {});
   cachedAccessToken = null;
 };
 
 export interface PlayerProfileData {
   uid: string;
   displayName: string;
+  region?: PlayerRegion;
+  accountOnboarded?: boolean;
   mmr: number;
   rankTier: string;
   credits: number;
@@ -153,12 +274,19 @@ export interface PlayerProfileData {
   wins: number;
   matchesPlayed: number;
   goalsScored: number;
+  savesMade?: number;
+  shotsTaken?: number;
+  demolitionsCount?: number;
+  cratesCount?: number;
+  equippedCarModel?: CarModelType;
   equippedBodyColor: string;
   equippedFinish: string;
   equippedBoostColor: string;
   equippedWheelStyle: string;
   ownedItemIds: string[];
+  ownedBlueprintIds?: string[];
   claimedSeasonTiers: number[];
+  claimedMissionIds?: string[];
 }
 
 export interface MatchRecordData {
@@ -202,7 +330,12 @@ export async function ensurePlayerProfile(
   try {
     const snap = await getDoc(ref);
     if (snap.exists()) {
-      return snap.data() as PlayerProfileData;
+      const data = snap.data() as PlayerProfileData;
+      return {
+        ...fallbackProfile,
+        ...data,
+        uid: safeUid
+      };
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);

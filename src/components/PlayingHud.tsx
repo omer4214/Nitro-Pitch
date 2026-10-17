@@ -104,9 +104,10 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
   onToggleBallCam,
   onPause
 }) => {
-  const minutes = Math.floor(hud.timeRemaining / 60);
-  const seconds = Math.floor(hud.timeRemaining % 60);
-  const formattedTime = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+  const rawSeconds = hud.isOvertime ? hud.overtimeElapsed : hud.timeRemaining;
+  const minutes = Math.floor(rawSeconds / 60);
+  const seconds = Math.floor(rawSeconds % 60);
+  const formattedTime = `${hud.isOvertime ? '+' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 
   const boostRadius = 26;
   const boostCircumference = 2 * Math.PI * boostRadius;
@@ -185,9 +186,18 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
               </span>
             </div>
 
-            {/* Match Clock */}
-            <div className="px-3 py-1 sm:px-4 sm:py-1.5 bg-[#111c33] text-center min-w-[68px] sm:min-w-[84px]">
-              <div className="text-sm sm:text-lg font-display font-bold font-mono-tabular text-white tracking-wider">
+            {/* Match Clock / Overtime Golden Goal Clock */}
+            <div className="px-3 py-1 sm:px-4 sm:py-1.5 bg-[#111c33] text-center min-w-[78px] sm:min-w-[96px]">
+              {hud.isOvertime && (
+                <div className="text-[9px] font-display font-bold text-amber-400 tracking-wider leading-none mb-0.5">
+                  ALTIN GOL
+                </div>
+              )}
+              <div
+                className={`text-sm sm:text-lg font-display font-bold font-mono-tabular tracking-wider leading-tight ${
+                  hud.isOvertime ? 'text-amber-300 animate-pulse' : 'text-white'
+                }`}
+              >
                 {formattedTime}
               </div>
             </div>
@@ -203,11 +213,19 @@ export const PlayingHud: React.FC<PlayingHudProps> = ({
             </div>
           </div>
 
+          {/* Overtime Golden Goal Status Pill */}
+          {hud.isOvertime && !hud.goalBanner && (
+            <div className="mt-1.5 px-3 py-0.5 rounded-lg bg-amber-950/95 border border-amber-400 text-amber-200 text-[10px] font-display font-bold tracking-wider shadow-xl">
+              UZATMA DEVRESİ · GOLÜ ATAN TAKIM KAZANIR!
+            </div>
+          )}
+
           {/* Goal / Demolition Event Banner */}
           {hud.goalBanner && (
             <div className="mt-2 px-4 py-1.5 rounded-xl bg-[#0b1324] border-2 border-amber-400 shadow-2xl text-center">
               <div className="text-xs sm:text-sm font-display font-bold text-white tracking-wide">
-                GOL! · {hud.goalBanner.scorer}
+                {hud.goalBanner.isGoldenGoal ? 'ALTIN GOL! ZAFER · ' : 'GOL! · '}
+                {hud.goalBanner.scorer}
               </div>
             </div>
           )}

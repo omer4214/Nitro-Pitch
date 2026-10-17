@@ -1,4 +1,8 @@
-export type GameMode = '1v1' | '2v2' | 'practice';
+export type GameMode = '1v1' | '2v2' | '3v3' | 'practice';
+export type PlaylistCategory = 'competitive' | 'casual';
+export type PlayerRegion = 'EU' | 'TR' | 'ASIA' | 'NA' | 'SAM';
+export type CarModelType = 'octane' | 'dominus' | 'fennec';
+export type GarageFocusTarget = 'overview' | 'body' | 'finish' | 'wheels' | 'boost';
 export type BotArchetype = 'striker' | 'sweeper' | 'flanker';
 export type BotDifficulty = 'rookie' | 'pro' | 'allstar' | 'unfair';
 export type CrossPlatformNetwork = 'PC_STEAM_EPIC' | 'MOBILE_TOUCH' | 'CONSOLE_CROSS';
@@ -10,6 +14,92 @@ export interface Vec3 {
   y: number;
   z: number;
 }
+
+export interface RegionInfo {
+  id: PlayerRegion;
+  name: string;
+  pingRange: string;
+  serverCluster: string;
+  tournamentTitle: string;
+  tournamentPrize: string;
+}
+
+export const REGIONS_CATALOG: RegionInfo[] = [
+  {
+    id: 'EU',
+    name: 'Avrupa (EU Central)',
+    pingRange: '24-38 ms',
+    serverCluster: 'Frankfurt / Amsterdam',
+    tournamentTitle: 'Avrupa Şampiyonlar Kupası (3v3)',
+    tournamentPrize: '1.500 CR + Efsanevi Kutu'
+  },
+  {
+    id: 'TR',
+    name: 'Türkiye & MENA (TR)',
+    pingRange: '9-18 ms',
+    serverCluster: 'İstanbul Merkez',
+    tournamentTitle: 'Türkiye Süpersonik Arena Kupası',
+    tournamentPrize: '1.200 CR + Altın Türbin Blueprint'
+  },
+  {
+    id: 'ASIA',
+    name: 'Asya-Pasifik (ASIA)',
+    pingRange: '68-95 ms',
+    serverCluster: 'Tokyo / Singapur',
+    tournamentTitle: 'Asya Siber Ligi Turnuvası',
+    tournamentPrize: '1.500 CR + Neon Bıçak Jant'
+  },
+  {
+    id: 'NA',
+    name: 'Kuzey Amerika (NA)',
+    pingRange: '85-110 ms',
+    serverCluster: 'New York / Chicago',
+    tournamentTitle: 'NA Grand Prix Serisi',
+    tournamentPrize: '1.400 CR + 2x Gizemli Kutu'
+  },
+  {
+    id: 'SAM',
+    name: 'Güney Amerika (SAM)',
+    pingRange: '115-140 ms',
+    serverCluster: 'São Paulo',
+    tournamentTitle: 'Copa Nitro Güney Amerika',
+    tournamentPrize: '1.200 CR + Zümrüt Gövde'
+  }
+];
+
+export interface GraphicsSettingsState {
+  resolutionScale: '0.75' | '1.0' | '1.35' | '2.0';
+  preset: 'performance' | 'balanced' | 'quality' | 'ultra';
+  shadows: boolean;
+  reflections: boolean;
+  antiAliasing: boolean;
+  particles: 'low' | 'medium' | 'high';
+}
+
+export const DEFAULT_GRAPHICS_SETTINGS: GraphicsSettingsState = {
+  resolutionScale: '1.0',
+  preset: 'ultra',
+  shadows: true,
+  reflections: true,
+  antiAliasing: true,
+  particles: 'high'
+};
+
+export interface GeneralSettingsState {
+  cameraFov: number; // 60 to 105
+  cameraDistance: number; // 9 to 18
+  cameraShake: boolean;
+  selectedLogo: 1 | 2 | 3;
+  region: PlayerRegion;
+}
+
+export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsState = {
+  cameraFov: 68,
+  cameraDistance: 12,
+  cameraShake: true,
+  selectedLogo: 1,
+  region: 'EU'
+};
 
 export interface ControlBindings {
   forward: string;
@@ -124,6 +214,7 @@ export interface CarState {
   goals: number;
   saves: number;
   shots: number;
+  carModel?: CarModelType;
   bodyColor: string;
   finish: string;
   boostColor: string;
@@ -166,6 +257,8 @@ export interface ControlInput {
 
 export interface ArenaPhysicsEvents {
   goalScored: 'blue' | 'orange' | null;
+  goldenGoalWinner: 'blue' | 'orange' | null;
+  overtimeStarted: boolean;
   heavyHit: boolean;
   lightHit: boolean;
   hitImpactSpeed: number;
@@ -223,9 +316,14 @@ export interface ReplayEventMarker {
 
 export interface ArenaState {
   mode: GameMode;
+  playlistCategory?: PlaylistCategory;
+  region?: PlayerRegion;
   botDifficulty: BotDifficulty;
   practiceBotEnabled: boolean;
   timeRemaining: number;
+  isOvertime?: boolean;
+  overtimeElapsed?: number;
+  matchEnded?: boolean;
   blueScore: number;
   orangeScore: number;
   hitstopTimer: number;
@@ -238,13 +336,13 @@ export interface ArenaState {
   boostPads: BoostPad[];
 }
 
-// Rocket League Enlarged Rectangular Stadium with Rounded Corners & Curved Wall Ramps
+// Rocket League Enlarged Rectangular Stadium with Rounded Corners & Solid Curved Wall Ramps
 export const ARENA_BOUNDS = {
   halfWidth: 58,
   halfLength: 88,
   ceiling: 46,
   cornerRadius: 16,
-  wallCurveRadius: 6,
+  wallCurveRadius: 5.5,
   goalHalfWidth: 13.5,
   goalHeight: 9.2,
   goalDepth: 9,
@@ -254,8 +352,8 @@ export const ARENA_BOUNDS = {
 
 /**
  * Evaluates the rounded-rectangle Rocket League stadium boundary in the XZ plane.
- * Returns whether the point is near/past the perimeter wall, the clamped position,
- * and the inward-pointing surface normal `(nx, nz)`.
+ * Also computes the solid 3D curved floor-to-wall ramp height `rampHeightY` and slope angle `rampAngle`
+ * so cars and the ball physically ride UP the curved corner/wall block instead of passing through it.
  */
 export function evaluateRoundedArenaWall(
   x: number,
@@ -269,10 +367,13 @@ export function evaluateRoundedArenaWall(
   nz: number;
   penetration: number;
   distToWall: number;
+  rampHeightY: number;
+  rampSlopeAngle: number;
 } {
   const maxW = ARENA_BOUNDS.halfWidth - margin;
   const maxL = ARENA_BOUNDS.halfLength - margin;
   const R = Math.max(2, ARENA_BOUNDS.cornerRadius - margin);
+  const rampR = ARENA_BOUNDS.wallCurveRadius;
 
   if (inGoalMouth) {
     const goalMaxZ = ARENA_BOUNDS.halfLength + ARENA_BOUNDS.goalDepth - margin;
@@ -299,7 +400,9 @@ export function evaluateRoundedArenaWall(
       nx,
       nz: nz || (z >= 0 ? -1 : 1),
       penetration: pen,
-      distToWall: Math.max(0, goalMaxZ - Math.abs(z))
+      distToWall: Math.max(0, goalMaxZ - Math.abs(z)),
+      rampHeightY: 0,
+      rampSlopeAngle: 0
     };
   }
 
@@ -307,6 +410,13 @@ export function evaluateRoundedArenaWall(
   const innerL = maxL - R;
   const absX = Math.abs(x);
   const absZ = Math.abs(z);
+
+  let clampedX = x;
+  let clampedZ = z;
+  let nx = 0;
+  let nz = 0;
+  let penetration = 0;
+  let distToWall = 0;
 
   // Check if inside one of the 4 rounded corner quadrants
   if (absX > innerW && absZ > innerL) {
@@ -318,60 +428,90 @@ export function evaluateRoundedArenaWall(
     const ux = cornerDist > 0.0001 ? (dx / cornerDist) * signX : signX * 0.7071;
     const uz = cornerDist > 0.0001 ? (dz / cornerDist) * signZ : signZ * 0.7071;
 
-    const penetration = Math.max(0, cornerDist - R);
-    const distToWall = Math.max(0, R - cornerDist);
-    const clampedX =
-      cornerDist > R ? signX * (innerW + (dx / cornerDist) * R) : x;
-    const clampedZ =
-      cornerDist > R ? signZ * (innerL + (dz / cornerDist) * R) : z;
-
-    return {
-      clampedX,
-      clampedZ,
-      nx: -ux,
-      nz: -uz,
-      penetration,
-      distToWall
-    };
-  }
-
-  // Straight side or back walls
-  const distSide = maxW - absX;
-  const distBack = maxL - absZ;
-
-  if (distSide < distBack) {
-    const signX = x >= 0 ? 1 : -1;
-    const penetration = Math.max(0, absX - maxW);
-    return {
-      clampedX: absX > maxW ? signX * maxW : x,
-      clampedZ: z,
-      nx: -signX,
-      nz: 0,
-      penetration,
-      distToWall: Math.max(0, distSide)
-    };
+    penetration = Math.max(0, cornerDist - R);
+    distToWall = Math.max(0, R - cornerDist);
+    clampedX = cornerDist > R ? signX * (innerW + (dx / cornerDist) * R) : x;
+    clampedZ = cornerDist > R ? signZ * (innerL + (dz / cornerDist) * R) : z;
+    nx = -ux;
+    nz = -uz;
   } else {
-    const signZ = z >= 0 ? 1 : -1;
-    const penetration = Math.max(0, absZ - maxL);
-    return {
-      clampedX: x,
-      clampedZ: absZ > maxL ? signZ * maxL : z,
-      nx: 0,
-      nz: -signZ,
-      penetration,
-      distToWall: Math.max(0, distBack)
-    };
+    // Straight side or back walls
+    const distSide = maxW - absX;
+    const distBack = maxL - absZ;
+
+    if (distSide < distBack) {
+      const signX = x >= 0 ? 1 : -1;
+      penetration = Math.max(0, absX - maxW);
+      clampedX = absX > maxW ? signX * maxW : x;
+      nx = -signX;
+      nz = 0;
+      distToWall = Math.max(0, distSide);
+    } else {
+      const signZ = z >= 0 ? 1 : -1;
+      penetration = Math.max(0, absZ - maxL);
+      clampedZ = absZ > maxL ? signZ * maxL : z;
+      nx = 0;
+      nz = -signZ;
+      distToWall = Math.max(0, distBack);
+    }
   }
+
+  // Compute solid quarter-circle curved ramp height (y_ramp from 0m to 5.5m)
+  let rampHeightY = 0;
+  let rampSlopeAngle = 0;
+  if (distToWall < rampR) {
+    const u = Math.min(rampR, Math.max(0, rampR - distToWall));
+    rampHeightY = rampR - Math.sqrt(Math.max(0, rampR * rampR - u * u));
+    rampSlopeAngle = Math.asin(Math.min(1, u / rampR));
+  }
+
+  return {
+    clampedX,
+    clampedZ,
+    nx,
+    nz,
+    penetration,
+    distToWall,
+    rampHeightY,
+    rampSlopeAngle
+  };
 }
 
 export interface MarketItem {
   id: string;
   name: string;
-  category: 'bodyColor' | 'finish' | 'boostColor' | 'wheelStyle';
+  category: 'bodyColor' | 'finish' | 'boostColor' | 'wheelStyle' | 'carModel';
   value: string;
   rarity: 'Common' | 'Rare' | 'Import' | 'Exotic' | 'BlackMarket';
   priceCredits: number;
+  blueprintBuildCost: number;
   description: string;
+}
+
+export interface BlueprintItem {
+  blueprintId: string;
+  targetItemId: string;
+  itemName: string;
+  category: MarketItem['category'];
+  value: string;
+  rarity: MarketItem['rarity'];
+  buildCostCredits: number;
+  description: string;
+}
+
+export interface MissionDef {
+  id: string;
+  category: 'competitive' | 'training' | 'season';
+  title: string;
+  description: string;
+  targetValue: number;
+  metric: 'matches' | 'goals' | 'saves' | 'demolitions' | 'wins' | 'practice_shots';
+  rewardCredits: number;
+  rewardXp: number;
+  rewardCrates: number;
+  rewardBlueprintId?: string;
+  rewardItemId?: string;
+  rewardSummaryLabel: string;
 }
 
 export interface SeasonRewardTier {
@@ -386,39 +526,73 @@ export interface SeasonRewardTier {
 
 export const MARKET_CATALOG: MarketItem[] = [
   {
+    id: 'car_octane_pro',
+    name: 'Octane Z-GT Gövde',
+    category: 'carModel',
+    value: 'octane',
+    rarity: 'Common',
+    priceCredits: 0,
+    blueprintBuildCost: 100,
+    description: 'Dengeli hava kontrolü ve çevik dönüşlü e-spor standart şasisi.'
+  },
+  {
+    id: 'car_dominus_gt',
+    name: 'Dominus V8 Kaslı Şasi',
+    category: 'carModel',
+    value: 'dominus',
+    rarity: 'Import',
+    priceCredits: 550,
+    blueprintBuildCost: 300,
+    description: 'Uzun ve alçak burun yapısıyla sert şut ve hava smaçları için ideal.'
+  },
+  {
+    id: 'car_fennec_rs',
+    name: 'Fennec RS Ralli Şasi',
+    category: 'carModel',
+    value: 'fennec',
+    rarity: 'Exotic',
+    priceCredits: 850,
+    blueprintBuildCost: 450,
+    description: 'Köşeli geniş çamurluklu, 50/50 ikili mücadelelerde üstün ralli gövdesi.'
+  },
+  {
     id: 'body_octane_cyan',
-    name: 'Siber Okyanus Gövde',
+    name: 'Siber Okyanus Gövde Boyası',
     category: 'bodyColor',
     value: '#06B6D4',
     rarity: 'Common',
     priceCredits: 0,
+    blueprintBuildCost: 100,
     description: 'Standart yüksek kontrastlı siber turkuaz yarış gövdesi.'
   },
   {
     id: 'body_crimson_pulse',
-    name: 'Kızıl Nabız Gövde',
+    name: 'Kızıl Nabız Gövde Boyası',
     category: 'bodyColor',
     value: '#F43F5E',
     rarity: 'Rare',
     priceCredits: 250,
+    blueprintBuildCost: 150,
     description: 'Agresif forvet oyuncuları için anodize kızıl alaşım.'
   },
   {
     id: 'body_emerald_viper',
-    name: 'Zümrüt Fırtına Gövde',
+    name: 'Zümrüt Fırtına Gövde Boyası',
     category: 'bodyColor',
     value: '#10B981',
     rarity: 'Import',
     priceCredits: 450,
+    blueprintBuildCost: 250,
     description: 'Gece stadyum ışıklarında parlayan zümrüt yarış kaplaması.'
   },
   {
     id: 'body_royal_amethyst',
-    name: 'Kraliyet Ametist Gövde',
+    name: 'Kraliyet Ametist Gövde Boyası',
     category: 'bodyColor',
     value: '#8B5CF6',
     rarity: 'Exotic',
     priceCredits: 800,
+    blueprintBuildCost: 400,
     description: 'Şampiyonluk serisi derin mor sedefli gövde boyası.'
   },
   {
@@ -428,6 +602,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: '#F59E0B',
     rarity: 'BlackMarket',
     priceCredits: 1400,
+    blueprintBuildCost: 650,
     description: '24 ayar saf altın yansımalı efsanevi karaborsa kaplaması.'
   },
   {
@@ -437,6 +612,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'anodized',
     rarity: 'Common',
     priceCredits: 0,
+    blueprintBuildCost: 100,
     description: 'Çift katmanlı parlak otomotiv verniği.'
   },
   {
@@ -446,6 +622,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'titanium',
     rarity: 'Rare',
     priceCredits: 300,
+    blueprintBuildCost: 180,
     description: 'Yüksek metalik yansımalı havacılık sınıfı titanyum doku.'
   },
   {
@@ -455,6 +632,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'carbon',
     rarity: 'Import',
     priceCredits: 500,
+    blueprintBuildCost: 280,
     description: 'Işığı emen taktiksel dokuma karbon yüzey.'
   },
   {
@@ -464,6 +642,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'chrome',
     rarity: 'BlackMarket',
     priceCredits: 1200,
+    blueprintBuildCost: 600,
     description: 'Stadyum spotlarını tam yansıtan hiper-krom kaplama.'
   },
   {
@@ -473,6 +652,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: '#F59E0B',
     rarity: 'Common',
     priceCredits: 0,
+    blueprintBuildCost: 100,
     description: 'Klasik yüksek ısılı kehribar roket egzozu.'
   },
   {
@@ -482,6 +662,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: '#06B6D4',
     rarity: 'Rare',
     priceCredits: 350,
+    blueprintBuildCost: 200,
     description: 'Mavi iyonize plazma itici izi.'
   },
   {
@@ -491,6 +672,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: '#EF4444',
     rarity: 'Exotic',
     priceCredits: 750,
+    blueprintBuildCost: 380,
     description: 'Süpersonik hızda yoğunlaşan kızıl enerji çekirdeği.'
   },
   {
@@ -500,6 +682,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: '#A855F7',
     rarity: 'BlackMarket',
     priceCredits: 1300,
+    blueprintBuildCost: 600,
     description: 'Uzay-zaman bükümlü mor plazma roket ateşi.'
   },
   {
@@ -509,6 +692,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'aero_apex',
     rarity: 'Common',
     priceCredits: 0,
+    blueprintBuildCost: 100,
     description: 'Hafif alaşımlı 6 kollu standart yarış jantı.'
   },
   {
@@ -518,6 +702,7 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'turbine_gold',
     rarity: 'Exotic',
     priceCredits: 700,
+    blueprintBuildCost: 350,
     description: 'Yüksek hızda altın halka oluşturan aerodinamik türbin.'
   },
   {
@@ -527,7 +712,118 @@ export const MARKET_CATALOG: MarketItem[] = [
     value: 'cyber_blade',
     rarity: 'BlackMarket',
     priceCredits: 1100,
+    blueprintBuildCost: 550,
     description: 'Işıklı siber halkalara sahip özel tasarım jant seti.'
+  }
+];
+
+export const BLUEPRINT_CATALOG: BlueprintItem[] = MARKET_CATALOG.filter(
+  (m) => m.priceCredits > 0
+).map((m) => ({
+  blueprintId: `bp_${m.id}`,
+  targetItemId: m.id,
+  itemName: `${m.name} [Blueprint]`,
+  category: m.category,
+  value: m.value,
+  rarity: m.rarity,
+  buildCostCredits: m.blueprintBuildCost,
+  description: `Bu şemayı ${m.blueprintBuildCost} Kredi karşılığında kalıcı ${m.name} eşyasına dönüştürebilir veya Takas sisteminde kullanabilirsiniz.`
+}));
+
+export const MISSION_CATALOG: MissionDef[] = [
+  // Competitive Missions (Rekabetçi Görevleri)
+  {
+    id: 'msn_comp_first_match',
+    category: 'competitive',
+    title: 'Rekabetçi Arenaya Adım',
+    description: 'Rekabetçi (1v1, 2v2 veya 3v3) modda 1 maç tamamla.',
+    targetValue: 1,
+    metric: 'matches',
+    rewardCredits: 250,
+    rewardXp: 500,
+    rewardCrates: 1,
+    rewardBlueprintId: 'bp_car_dominus_gt',
+    rewardSummaryLabel: '250 Kredi + 500 XP + 1 Kutu + Dominus V8 Blueprint'
+  },
+  {
+    id: 'msn_comp_3_goals',
+    category: 'competitive',
+    title: 'Keskin Nişancı Forvet',
+    description: 'Maçlarda toplam 3 gol kaydet.',
+    targetValue: 3,
+    metric: 'goals',
+    rewardCredits: 400,
+    rewardXp: 750,
+    rewardCrates: 2,
+    rewardItemId: 'wheel_turbine_gold',
+    rewardSummaryLabel: '400 Kredi + 750 XP + 2 Kutu + Altın Türbin Jant'
+  },
+  {
+    id: 'msn_comp_2_wins',
+    category: 'competitive',
+    title: 'Bölgesel Lig Zaferi',
+    description: 'Bölgesel veya rekabetçi maçlarda 2 galibiyet kazan.',
+    targetValue: 2,
+    metric: 'wins',
+    rewardCredits: 600,
+    rewardXp: 1100,
+    rewardCrates: 2,
+    rewardItemId: 'car_fennec_rs',
+    rewardSummaryLabel: '600 Kredi + 1100 XP + 2 Kutu + Fennec RS Araba Gövdesi'
+  },
+  // Training Missions (Antrenman Görevleri)
+  {
+    id: 'msn_train_shots',
+    category: 'training',
+    title: 'Duvar & Hava Smaç Antrenmanı',
+    description: 'Antrenman veya maçlarda kaleye 2 isabetli şut çek.',
+    targetValue: 2,
+    metric: 'shots',
+    rewardCredits: 200,
+    rewardXp: 400,
+    rewardCrates: 1,
+    rewardBlueprintId: 'bp_wheel_cyber_blade',
+    rewardSummaryLabel: '200 Kredi + 400 XP + 1 Kutu + Neon Bıçak Jant Blueprint'
+  },
+  {
+    id: 'msn_train_demolition',
+    category: 'training',
+    title: 'Süpersonik İmha Uzmanı',
+    description: 'Son hızda turboyla rakip aracı 1 kez patlat (Demolition).',
+    targetValue: 1,
+    metric: 'demolitions',
+    rewardCredits: 300,
+    rewardXp: 550,
+    rewardCrates: 1,
+    rewardItemId: 'boost_hyper_cyan',
+    rewardSummaryLabel: '300 Kredi + 550 XP + 1 Kutu + Hiper Plazma Nitro'
+  },
+  // Season Missions (Sezon Görevleri)
+  {
+    id: 'msn_season_saves',
+    category: 'season',
+    title: 'Demir Kale Savunması',
+    description: 'Kalene giden 2 şutu kurtar (Save).',
+    targetValue: 2,
+    metric: 'saves',
+    rewardCredits: 450,
+    rewardXp: 900,
+    rewardCrates: 2,
+    rewardItemId: 'body_emerald_viper',
+    rewardSummaryLabel: '450 Kredi + 900 XP + 2 Kutu + Zümrüt Fırtına Gövde'
+  },
+  {
+    id: 'msn_season_veteran',
+    category: 'season',
+    title: 'Sezon 1 Efsanesi',
+    description: 'Toplam 5 maç tamamlayarak Sezon Kasasını aç.',
+    targetValue: 5,
+    metric: 'matches',
+    rewardCredits: 1000,
+    rewardXp: 1800,
+    rewardCrates: 3,
+    rewardItemId: 'finish_chrome',
+    rewardSummaryLabel: '1000 Kredi + 1800 XP + 3 Kutu + Ayna Krom Kaplama'
   }
 ];
 
@@ -694,7 +990,9 @@ export function calculateMmrDelta(
   const kFactor = 32;
   const goalDiffBonus = Math.min(8, Math.abs(playerScore - opponentScore) * 2);
   const rawDelta = Math.round(kFactor * (actualScore - expectedScore));
-  return won ? Math.max(8, rawDelta + goalDiffBonus) : Math.min(-6, rawDelta - Math.floor(goalDiffBonus / 2));
+  return won
+    ? Math.max(8, rawDelta + goalDiffBonus)
+    : Math.min(-6, rawDelta - Math.floor(goalDiffBonus / 2));
 }
 
 export function calculateSeasonLevel(seasonXp: number): {
@@ -728,7 +1026,6 @@ export function calculateSeasonLevel(seasonXp: number): {
 }
 
 export function createInitialBoostPads(): BoostPad[] {
-  // 6 Full Boost Pads (100 Boost, 20s Respawn) across the rounded 58x88 stadium
   const fullPads: Array<[number, number]> = [
     [-46, -66],
     [46, -66],
@@ -737,7 +1034,6 @@ export function createInitialBoostPads(): BoostPad[] {
     [-46, 66],
     [46, 66]
   ];
-  // 16 Small Boost Pads (15 Boost, 10s Respawn)
   const smallPads: Array<[number, number]> = [
     [-22, -56],
     [22, -56],
@@ -767,10 +1063,70 @@ export function createInitialBoostPads(): BoostPad[] {
   return pads;
 }
 
+function makeCarState(params: {
+  id: string;
+  name: string;
+  team: 'blue' | 'orange';
+  isBot: boolean;
+  archetype: BotArchetype;
+  platform: CrossPlatformNetwork;
+  x: number;
+  z: number;
+  yaw: number;
+  carModel?: CarModelType;
+  bodyColor: string;
+  finish: string;
+  boostColor: string;
+  wheelStyle: string;
+}): CarState {
+  return {
+    id: params.id,
+    name: params.name,
+    team: params.team,
+    isBot: params.isBot,
+    archetype: params.archetype,
+    platform: params.platform,
+    position: { x: params.x, y: 0, z: params.z },
+    velocity: { x: 0, y: 0, z: 0 },
+    yaw: params.yaw,
+    pitch: 0,
+    roll: 0,
+    boost: 50,
+    isGrounded: true,
+    surfaceState: 'floor',
+    wallStallTimer: 0,
+    ceilingClingTimer: 0,
+    wallNormal: { x: 0, z: 0 },
+    hasDoubleJump: true,
+    coyoteTimer: 0.12,
+    jumpBufferTimer: 0,
+    dodgeTimer: 0,
+    dodgeType: 'none',
+    dodgePitchAxis: 0,
+    dodgeRollAxis: 0,
+    dodgeDir: { x: 0, z: params.team === 'blue' ? 1 : -1 },
+    supersonic: false,
+    demolishedTimer: 0,
+    demolitions: 0,
+    telegraphTimer: 0,
+    goals: 0,
+    saves: 0,
+    shots: 0,
+    carModel: params.carModel || 'octane',
+    bodyColor: params.bodyColor,
+    finish: params.finish,
+    boostColor: params.boostColor,
+    wheelStyle: params.wheelStyle,
+    squashX: 1,
+    squashY: 1
+  };
+}
+
 export function createInitialArenaState(
   mode: GameMode,
   playerLoadout: {
     displayName: string;
+    carModel?: CarModelType;
     bodyColor: string;
     finish: string;
     boostColor: string;
@@ -778,100 +1134,82 @@ export function createInitialArenaState(
     platform: CrossPlatformNetwork;
     botDifficulty?: BotDifficulty;
     practiceBotEnabled?: boolean;
+    playlistCategory?: PlaylistCategory;
+    region?: PlayerRegion;
+    matchedPlayers?: Array<{ name: string; team: 'blue' | 'orange'; isBot?: boolean }>;
   }
 ): ArenaState {
   const botDifficulty: BotDifficulty = playerLoadout.botDifficulty || 'pro';
   const practiceBotEnabled =
     playerLoadout.practiceBotEnabled !== undefined ? playerLoadout.practiceBotEnabled : true;
+  const region = playerLoadout.region || 'EU';
 
   const cars: CarState[] = [
-    {
+    makeCarState({
       id: 'player_1',
       name: playerLoadout.displayName || 'Oyuncu',
       team: 'blue',
       isBot: false,
       archetype: 'striker',
       platform: playerLoadout.platform,
-      position: { x: 0, y: 0, z: -50 },
-      velocity: { x: 0, y: 0, z: 0 },
+      x: 0,
+      z: -50,
       yaw: 0,
-      pitch: 0,
-      roll: 0,
-      boost: 50,
-      isGrounded: true,
-      surfaceState: 'floor',
-      wallStallTimer: 0,
-      ceilingClingTimer: 0,
-      wallNormal: { x: 0, z: 0 },
-      hasDoubleJump: true,
-      coyoteTimer: 0.12,
-      jumpBufferTimer: 0,
-      dodgeTimer: 0,
-      dodgeType: 'none',
-      dodgePitchAxis: 0,
-      dodgeRollAxis: 0,
-      dodgeDir: { x: 0, z: 1 },
-      supersonic: false,
-      demolishedTimer: 0,
-      demolitions: 0,
-      telegraphTimer: 0,
-      goals: 0,
-      saves: 0,
-      shots: 0,
+      carModel: playerLoadout.carModel || 'octane',
       bodyColor: playerLoadout.bodyColor,
       finish: playerLoadout.finish,
       boostColor: playerLoadout.boostColor,
-      wheelStyle: playerLoadout.wheelStyle,
-      squashX: 1,
-      squashY: 1
-    }
+      wheelStyle: playerLoadout.wheelStyle
+    })
   ];
 
-  if (mode === '2v2') {
-    cars.push({
-      id: 'bot_blue_2',
-      name: 'Aegis-TR [Sweeper]',
-      team: 'blue',
-      isBot: true,
-      archetype: 'sweeper',
-      platform: 'CONSOLE_CROSS',
-      position: { x: -16, y: 0, z: -64 },
-      velocity: { x: 0, y: 0, z: 0 },
-      yaw: 0,
-      pitch: 0,
-      roll: 0,
-      boost: 50,
-      isGrounded: true,
-      surfaceState: 'floor',
-      wallStallTimer: 0,
-      ceilingClingTimer: 0,
-      wallNormal: { x: 0, z: 0 },
-      hasDoubleJump: true,
-      coyoteTimer: 0.12,
-      jumpBufferTimer: 0,
-      dodgeTimer: 0,
-      dodgeType: 'none',
-      dodgePitchAxis: 0,
-      dodgeRollAxis: 0,
-      dodgeDir: { x: 0, z: 1 },
-      supersonic: false,
-      demolishedTimer: 0,
-      demolitions: 0,
-      telegraphTimer: 0,
-      goals: 0,
-      saves: 0,
-      shots: 0,
-      bodyColor: '#0284C7',
-      finish: 'titanium',
-      boostColor: '#38BDF8',
-      wheelStyle: 'aero_apex',
-      squashX: 1,
-      squashY: 1
-    });
+  const matchedBlue = (playerLoadout.matchedPlayers || []).filter((p) => p.team === 'blue');
+  const matchedOrange = (playerLoadout.matchedPlayers || []).filter((p) => p.team === 'orange');
+
+  if (mode === '2v2' || mode === '3v3') {
+    cars.push(
+      makeCarState({
+        id: 'blue_2',
+        name: matchedBlue[0]?.name || `[${region}] Aegis-Pilot`,
+        team: 'blue',
+        isBot: matchedBlue[0]?.isBot ?? true,
+        archetype: 'sweeper',
+        platform: 'CONSOLE_CROSS',
+        x: -16,
+        z: -64,
+        yaw: 0,
+        carModel: 'dominus',
+        bodyColor: '#0284C7',
+        finish: 'titanium',
+        boostColor: '#38BDF8',
+        wheelStyle: 'aero_apex'
+      })
+    );
   }
 
-  const shouldSpawnOrangeBot = mode !== 'practice' || practiceBotEnabled;
-  if (shouldSpawnOrangeBot) {
+  if (mode === '3v3') {
+    cars.push(
+      makeCarState({
+        id: 'blue_3',
+        name: matchedBlue[1]?.name || `[${region}] Nova-Kanat`,
+        team: 'blue',
+        isBot: matchedBlue[1]?.isBot ?? true,
+        archetype: 'flanker',
+        platform: 'PC_STEAM_EPIC',
+        x: 16,
+        z: -64,
+        yaw: 0,
+        carModel: 'fennec',
+        bodyColor: '#0EA5E9',
+        finish: 'anodized',
+        boostColor: '#06B6D4',
+        wheelStyle: 'turbine_gold'
+      })
+    );
+  }
+
+  const shouldSpawnOrange = mode !== 'practice' || practiceBotEnabled;
+  if (shouldSpawnOrange) {
     const diffLabel =
       botDifficulty === 'rookie'
         ? 'Çaylak'
@@ -880,96 +1218,80 @@ export function createInitialArenaState(
         : botDifficulty === 'allstar'
         ? 'All-Star'
         : 'Efsanevi';
-    cars.push({
-      id: 'bot_orange_1',
-      name: `Valkyrie-X [${diffLabel}]`,
-      team: 'orange',
-      isBot: true,
-      archetype: 'striker',
-      platform: 'PC_STEAM_EPIC',
-      position: { x: mode === '2v2' ? 14 : 0, y: 0, z: 50 },
-      velocity: { x: 0, y: 0, z: 0 },
-      yaw: Math.PI,
-      pitch: 0,
-      roll: 0,
-      boost: 50,
-      isGrounded: true,
-      surfaceState: 'floor',
-      wallStallTimer: 0,
-      ceilingClingTimer: 0,
-      wallNormal: { x: 0, z: 0 },
-      hasDoubleJump: true,
-      coyoteTimer: 0.12,
-      jumpBufferTimer: 0,
-      dodgeTimer: 0,
-      dodgeType: 'none',
-      dodgePitchAxis: 0,
-      dodgeRollAxis: 0,
-      dodgeDir: { x: 0, z: -1 },
-      supersonic: false,
-      demolishedTimer: 0,
-      demolitions: 0,
-      telegraphTimer: 0,
-      goals: 0,
-      saves: 0,
-      shots: 0,
-      bodyColor: '#F97316',
-      finish: 'anodized',
-      boostColor: '#F59E0B',
-      wheelStyle: 'turbine_gold',
-      squashX: 1,
-      squashY: 1
-    });
-
-    if (mode === '2v2') {
-      cars.push({
-        id: 'bot_orange_2',
-        name: 'Zephyr-M [Kanat]',
+    cars.push(
+      makeCarState({
+        id: 'orange_1',
+        name:
+          matchedOrange[0]?.name ||
+          (mode === 'practice' ? `Antrenman Botu [${diffLabel}]` : `[${region}] Valkyrie-X`),
         team: 'orange',
-        isBot: true,
-        archetype: 'flanker',
-        platform: 'MOBILE_TOUCH',
-        position: { x: -16, y: 0, z: 64 },
-        velocity: { x: 0, y: 0, z: 0 },
+        isBot: matchedOrange[0]?.isBot ?? true,
+        archetype: 'striker',
+        platform: 'PC_STEAM_EPIC',
+        x: mode === '1v1' || mode === 'practice' ? 0 : 14,
+        z: 50,
         yaw: Math.PI,
-        pitch: 0,
-        roll: 0,
-        boost: 50,
-        isGrounded: true,
-        surfaceState: 'floor',
-        wallStallTimer: 0,
-        ceilingClingTimer: 0,
-        wallNormal: { x: 0, z: 0 },
-        hasDoubleJump: true,
-        coyoteTimer: 0.12,
-        jumpBufferTimer: 0,
-        dodgeTimer: 0,
-        dodgeType: 'none',
-        dodgePitchAxis: 0,
-        dodgeRollAxis: 0,
-        dodgeDir: { x: 0, z: -1 },
-        supersonic: false,
-        demolishedTimer: 0,
-        demolitions: 0,
-        telegraphTimer: 0,
-        goals: 0,
-        saves: 0,
-        shots: 0,
-        bodyColor: '#EF4444',
-        finish: 'carbon',
-        boostColor: '#F43F5E',
-        wheelStyle: 'cyber_blade',
-        squashX: 1,
-        squashY: 1
-      });
+        carModel: 'octane',
+        bodyColor: '#F97316',
+        finish: 'anodized',
+        boostColor: '#F59E0B',
+        wheelStyle: 'turbine_gold'
+      })
+    );
+
+    if (mode === '2v2' || mode === '3v3') {
+      cars.push(
+        makeCarState({
+          id: 'orange_2',
+          name: matchedOrange[1]?.name || `[${region}] Zephyr-M`,
+          team: 'orange',
+          isBot: matchedOrange[1]?.isBot ?? true,
+          archetype: 'flanker',
+          platform: 'MOBILE_TOUCH',
+          x: -16,
+          z: 64,
+          yaw: Math.PI,
+          carModel: 'dominus',
+          bodyColor: '#EF4444',
+          finish: 'carbon',
+          boostColor: '#F43F5E',
+          wheelStyle: 'cyber_blade'
+        })
+      );
+    }
+
+    if (mode === '3v3') {
+      cars.push(
+        makeCarState({
+          id: 'orange_3',
+          name: matchedOrange[2]?.name || `[${region}] Hyperion-TR`,
+          team: 'orange',
+          isBot: matchedOrange[2]?.isBot ?? true,
+          archetype: 'sweeper',
+          platform: 'CONSOLE_CROSS',
+          x: 16,
+          z: 68,
+          yaw: Math.PI,
+          carModel: 'fennec',
+          bodyColor: '#EA580C',
+          finish: 'titanium',
+          boostColor: '#F59E0B',
+          wheelStyle: 'aero_apex'
+        })
+      );
     }
   }
 
   return {
     mode,
+    playlistCategory: playerLoadout.playlistCategory || 'competitive',
+    region,
     botDifficulty,
     practiceBotEnabled,
     timeRemaining: 180,
+    isOvertime: false,
+    overtimeElapsed: 0,
+    matchEnded: false,
     blueScore: 0,
     orangeScore: 0,
     hitstopTimer: 0,
@@ -997,6 +1319,17 @@ export function resetKickoffPositions(state: ArenaState): void {
   state.ball.angularVelocity = { x: 0, y: 0, z: 0 };
   state.ball.hitFlashTimer = 0;
 
+  const blueSlots: Array<[number, number]> = [
+    [0, -50],
+    [-16, -64],
+    [16, -64]
+  ];
+  const orangeSlots: Array<[number, number]> = [
+    [0, 50],
+    [-16, 64],
+    [16, 64]
+  ];
+
   let blueIdx = 0;
   let orangeIdx = 0;
   for (const car of state.cars) {
@@ -1020,19 +1353,13 @@ export function resetKickoffPositions(state: ArenaState): void {
     car.squashY = 1;
 
     if (car.team === 'blue') {
-      car.position = {
-        x: blueIdx === 0 ? 0 : -16,
-        y: 0,
-        z: blueIdx === 0 ? -50 : -64
-      };
+      const slot = blueSlots[blueIdx % blueSlots.length];
+      car.position = { x: slot[0], y: 0, z: slot[1] };
       car.yaw = 0;
       blueIdx++;
     } else {
-      car.position = {
-        x: orangeIdx === 0 ? 0 : 16,
-        y: 0,
-        z: orangeIdx === 0 ? 50 : 64
-      };
+      const slot = orangeSlots[orangeIdx % orangeSlots.length];
+      car.position = { x: slot[0], y: 0, z: slot[1] };
       car.yaw = Math.PI;
       orangeIdx++;
     }
@@ -1227,6 +1554,8 @@ export function stepArenaPhysics(
   const dt = clamp(rawDt, 0.001, 0.05);
   const events: ArenaPhysicsEvents = {
     goalScored: null,
+    goldenGoalWinner: null,
+    overtimeStarted: false,
     heavyHit: false,
     lightHit: false,
     hitImpactSpeed: 0,
@@ -1251,7 +1580,7 @@ export function stepArenaPhysics(
 
   if (state.goalResetTimer > 0) {
     state.goalResetTimer = Math.max(0, state.goalResetTimer - dt);
-    if (state.goalResetTimer === 0) {
+    if (state.goalResetTimer === 0 && !state.matchEnded) {
       resetKickoffPositions(state);
     }
     return events;
@@ -1262,8 +1591,24 @@ export function stepArenaPhysics(
     return events;
   }
 
-  if (state.mode !== 'practice' && state.timeRemaining > 0) {
-    state.timeRemaining = Math.max(0, state.timeRemaining - dt);
+  // Match Clock & Golden Goal Overtime ("Berabere kalınca uzatma olsun, golü atan takım kazanıyor direk altın gol")
+  if (state.mode !== 'practice' && !state.matchEnded) {
+    if (state.isOvertime) {
+      state.overtimeElapsed = (state.overtimeElapsed || 0) + dt;
+    } else if (state.timeRemaining > 0) {
+      state.timeRemaining = Math.max(0, state.timeRemaining - dt);
+      if (state.timeRemaining === 0) {
+        if (state.blueScore === state.orangeScore) {
+          // Enter Infinite Golden Goal Overtime!
+          state.isOvertime = true;
+          state.overtimeElapsed = 0;
+          events.overtimeStarted = true;
+          resetKickoffPositions(state);
+        } else {
+          state.matchEnded = true;
+        }
+      }
+    }
   }
 
   // Update boost pad cooldowns (Big = 20s, Small = 10s)
@@ -1278,7 +1623,6 @@ export function stepArenaPhysics(
 
   // Step each car
   for (const car of state.cars) {
-    // Handle demolished respawn timer
     if (car.demolishedTimer > 0) {
       car.demolishedTimer = Math.max(0, car.demolishedTimer - dt);
       if (car.demolishedTimer === 0) {
@@ -1305,7 +1649,6 @@ export function stepArenaPhysics(
 
     const input = car.isBot ? computeBotInput(car, state, dt) : playerInput;
 
-    // Smooth squash & stretch recovery
     const dampFactor = 1 - Math.exp(-12 * dt);
     car.squashX += (1 - car.squashX) * dampFactor;
     car.squashY += (1 - car.squashY) * dampFactor;
@@ -1340,7 +1683,7 @@ export function stepArenaPhysics(
     const rightX = Math.cos(car.yaw);
     const rightZ = -Math.sin(car.yaw);
 
-    // Ground/Air/Wall/Ceiling Acceleration
+    // Acceleration
     const accel = (car.isGrounded ? 36 : 22) * input.throttle;
     car.velocity.x += newFwdX * accel * dt;
     car.velocity.z += newFwdZ * accel * dt;
@@ -1354,7 +1697,7 @@ export function stepArenaPhysics(
       car.boost = Math.max(0, car.boost - 20 * dt);
     }
 
-    // Turbo / Rocket Boost (Left Click by default)
+    // Turbo / Rocket Boost
     if (input.boostHeld && car.boost > 0) {
       const boostPower = 44;
       car.velocity.x += newFwdX * boostPower * dt;
@@ -1367,22 +1710,20 @@ export function stepArenaPhysics(
       car.boost = Math.max(0, car.boost - 24 * dt);
     }
 
-    // Lateral grip (reduced during Shift drift/powerslide)
+    // Lateral grip
     const lateralSpeed = car.velocity.x * rightX + car.velocity.z * rightZ;
     const grip = car.isGrounded ? (input.driftHeld ? 1.85 : 8.8) : 0.85;
     car.velocity.x -= rightX * lateralSpeed * Math.min(1, grip * dt);
     car.velocity.z -= rightZ * lateralSpeed * Math.min(1, grip * dt);
 
-    // Jump & 4-Way / 8-Way Directional Dodge Flip (works from Floor, Wall, or Ceiling!)
+    // Jump & Directional Dodge Flip
     if (car.jumpBufferTimer > 0 && car.coyoteTimer > 0) {
       if (car.surfaceState === 'wall') {
-        // Jumping off a wall pushes away from the wall normal + upward
-        car.velocity.x += car.wallNormal.x * 14;
-        car.velocity.z += car.wallNormal.z * 14;
-        car.velocity.y = Math.max(car.velocity.y + 10, 12);
+        car.velocity.x += car.wallNormal.x * 15;
+        car.velocity.z += car.wallNormal.z * 15;
+        car.velocity.y = Math.max(car.velocity.y + 9, 11);
       } else if (car.surfaceState === 'ceiling') {
-        // Jumping off the ceiling launches downward
-        car.velocity.y = -12;
+        car.velocity.y = -13;
       } else {
         car.velocity.y = 16.5;
       }
@@ -1442,49 +1783,49 @@ export function stepArenaPhysics(
       }
     }
 
-    // Gravity & Surface Adhesion (Floor vs Wall Climb/Slide vs Ceiling 1-2s Cling)
+    // Gravity & Surface Adhesion (Fixed: short realistic cling times so cars never stay stuck on walls/ceiling!)
     if (car.surfaceState === 'ceiling') {
       car.ceilingClingTimer += dt;
-      // Stay adhered to the ceiling for ~1.8s (1-2 seconds), then lose grip and slip/fall down!
-      const isActivelyDrivingOnCeiling =
-        Math.abs(input.throttle) > 0.15 || input.boostHeld;
-      const maxClingTime = isActivelyDrivingOnCeiling ? 2.0 : 1.4;
-      if (car.ceilingClingTimer <= maxClingTime) {
+      // Short 0.85s ceiling touch before gravity naturally pulls the car down
+      if (car.ceilingClingTimer <= 0.85) {
         car.position.y = ARENA_BOUNDS.ceiling - 1.2;
         car.velocity.y = 0;
         car.isGrounded = true;
         car.hasDoubleJump = true;
       } else {
-        // Detach from ceiling and fall under gravity!
         car.surfaceState = 'air';
         car.isGrounded = false;
-        car.velocity.y = Math.min(car.velocity.y, -4.5);
+        car.velocity.y = Math.min(car.velocity.y, -7.5);
       }
     } else if (car.surfaceState === 'wall') {
-      // On the stadium wall: driving forward/boost climbs up; waiting 2-3 seconds causes slow slide down!
       const intoWallDot = -(newFwdX * car.wallNormal.x + newFwdZ * car.wallNormal.z);
+      const currentSpeed = Math.hypot(car.velocity.x, car.velocity.y, car.velocity.z);
       const activeWallDrive =
-        (Math.abs(input.throttle) > 0.2 || input.boostHeld) &&
-        Math.hypot(car.velocity.x, car.velocity.y, car.velocity.z) > 6;
+        (input.throttle > 0.2 || input.boostHeld) &&
+        intoWallDot > -0.15 &&
+        currentSpeed > 13;
 
       if (activeWallDrive) {
-        car.wallStallTimer = Math.max(0, car.wallStallTimer - dt * 1.5);
-        // Convert forward throttle into vertical wall climb when facing up/into the wall
+        car.wallStallTimer = Math.max(0, car.wallStallTimer - dt);
         const climbDrive =
-          input.throttle * (intoWallDot > -0.2 ? 32 : -22) +
-          (input.boostHeld && car.boost > 0 ? 28 : 0);
+          input.throttle * (intoWallDot > 0 ? 28 : 12) +
+          (input.boostHeld && car.boost > 0 ? 26 : 0);
         car.velocity.y += climbDrive * dt;
-        // Mild wall gravity while actively driving on wall
-        car.velocity.y -= 8 * dt;
+        car.velocity.y -= 14 * dt;
       } else {
         car.wallStallTimer += dt;
-        if (car.wallStallTimer < 2.2) {
-          // Hold/slowly settle on the wall for the first ~2.2 seconds
-          car.velocity.y *= Math.pow(0.86, dt * 60);
-          car.velocity.y -= 2.2 * dt;
+        if (car.wallStallTimer < 0.65 && currentSpeed > 8) {
+          car.velocity.y -= 12 * dt;
         } else {
-          // After 2-3 seconds of waiting on the wall, slowly slide down to the floor!
-          car.velocity.y = clamp(car.velocity.y - 14 * dt, -10.5, 0);
+          // Smoothly slide down the wall/ramp without staying stuck!
+          car.velocity.y = clamp(car.velocity.y - 22 * dt, -18, 4);
+          // Push slightly inward along wall normal if steering away or stalled
+          if (intoWallDot < -0.25 || car.wallStallTimer > 1.1) {
+            car.velocity.x += car.wallNormal.x * 8 * dt;
+            car.velocity.z += car.wallNormal.z * 8 * dt;
+            car.surfaceState = 'air';
+            car.isGrounded = false;
+          }
         }
       }
     } else if (!car.isGrounded) {
@@ -1510,7 +1851,7 @@ export function stepArenaPhysics(
     car.position.y += car.velocity.y * dt;
     car.position.z += car.velocity.z * dt;
 
-    // Rounded Rocket League Wall & Curved Ramp Transition
+    // Solid 3D Curved Corner/Wall Ramp Block + Vertical Wall Transition
     const inGoalX =
       Math.abs(car.position.x) < ARENA_BOUNDS.goalHalfWidth - 1.2 &&
       car.position.y < ARENA_BOUNDS.goalHeight;
@@ -1521,39 +1862,59 @@ export function stepArenaPhysics(
       inGoalX
     );
 
-    if (!inGoalX && (wallEval.penetration > 0 || (car.surfaceState === 'wall' && wallEval.distToWall < 2.4))) {
+    // 1. Solid Curved Ramp Block (0 < distToWall < 5.5m): car physically rides OVER the curved corner/wall ramp!
+    if (!inGoalX && wallEval.rampHeightY > 0.02 && car.position.y <= wallEval.rampHeightY + 0.35) {
+      const speedIntoRamp = -(
+        car.velocity.x * wallEval.nx + car.velocity.z * wallEval.nz
+      );
+      car.position.y = Math.max(car.position.y, wallEval.rampHeightY);
+      car.wallNormal = { x: wallEval.nx, z: wallEval.nz };
+      car.isGrounded = true;
+      car.hasDoubleJump = true;
+
+      if (speedIntoRamp > 0 && wallEval.rampSlopeAngle > 0.08) {
+        // Redirect horizontal speed upward along the curved ramp tangent
+        const liftVel = speedIntoRamp * Math.sin(wallEval.rampSlopeAngle) * 0.92;
+        if (car.velocity.y < liftVel) {
+          car.velocity.y = liftVel;
+        }
+      }
+    }
+
+    // 2. Vertical Wall Boundary (penetration > 0)
+    if (!inGoalX && wallEval.penetration > 0) {
       car.position.x = wallEval.clampedX;
       car.position.z = wallEval.clampedZ;
       car.wallNormal = { x: wallEval.nx, z: wallEval.nz };
 
-      // Speed directed outward into the curved wall ramp
       const speedIntoWall = -(
         car.velocity.x * wallEval.nx + car.velocity.z * wallEval.nz
       );
 
-      if (speedIntoWall > 2.5 || car.surfaceState === 'wall' || Math.abs(input.throttle) > 0.2) {
-        // Smoothly redirect horizontal momentum UP the curved Rocket League wall!
-        if (car.surfaceState !== 'wall' && speedIntoWall > 2.5) {
-          car.velocity.y = Math.max(car.velocity.y, speedIntoWall * 0.95);
-          car.position.y = Math.max(car.position.y, 0.15);
+      if (speedIntoWall > 4.0 || (car.surfaceState === 'wall' && input.throttle > 0.2)) {
+        if (car.surfaceState !== 'wall' && speedIntoWall > 4.0) {
+          car.velocity.y = Math.max(car.velocity.y, speedIntoWall * 0.88);
+          car.position.y = Math.max(car.position.y, ARENA_BOUNDS.wallCurveRadius * 0.7);
           car.wallStallTimer = 0;
         }
         car.surfaceState = 'wall';
         car.isGrounded = true;
         car.hasDoubleJump = true;
 
-        // Remove velocity component penetrating into the wall so the car glides along/up the wall
         if (speedIntoWall > 0) {
           car.velocity.x += wallEval.nx * speedIntoWall;
           car.velocity.z += wallEval.nz * speedIntoWall;
         }
       } else {
-        car.velocity.x *= -0.35;
-        car.velocity.z *= -0.35;
+        car.velocity.x += wallEval.nx * Math.max(speedIntoWall * 1.25, 2.0);
+        car.velocity.z += wallEval.nz * Math.max(speedIntoWall * 1.25, 2.0);
+        if (car.position.y <= wallEval.rampHeightY + 0.2) {
+          car.surfaceState = 'floor';
+        }
       }
-    } else if (car.surfaceState === 'wall' && wallEval.distToWall >= 2.4) {
-      car.surfaceState = car.position.y > 0.2 ? 'air' : 'floor';
-      car.isGrounded = car.position.y <= 0.2;
+    } else if (car.surfaceState === 'wall' && wallEval.distToWall > 0.55) {
+      car.surfaceState = car.position.y > wallEval.rampHeightY + 0.35 ? 'air' : 'floor';
+      car.isGrounded = car.position.y <= wallEval.rampHeightY + 0.35;
       car.wallStallTimer = 0;
     } else if (inGoalX && wallEval.penetration > 0) {
       car.position.x = wallEval.clampedX;
@@ -1561,15 +1922,18 @@ export function stepArenaPhysics(
     }
 
     // Ground & High Ceiling (46m) collision + Ceiling Cling Transition
-    if (car.position.y <= 0 && car.velocity.y <= 0) {
+    const minGroundY = !inGoalX ? wallEval.rampHeightY : 0;
+    if (car.position.y <= minGroundY && car.velocity.y <= 0) {
       if (!car.isGrounded && car.velocity.y < -4) {
         car.squashX = 1.22;
         car.squashY = 0.78;
       }
-      car.position.y = 0;
-      car.velocity.y = 0;
+      car.position.y = minGroundY;
+      car.velocity.y = Math.max(0, car.velocity.y);
       car.isGrounded = true;
-      car.surfaceState = 'floor';
+      if (car.surfaceState !== 'wall') {
+        car.surfaceState = 'floor';
+      }
       car.wallStallTimer = 0;
       car.ceilingClingTimer = 0;
     } else if (car.position.y >= ARENA_BOUNDS.ceiling - 1.2) {
@@ -1583,7 +1947,7 @@ export function stepArenaPhysics(
       }
     }
 
-    // Full 360° Directional Dodge Spin OR Surface-Aligned Orientation (Floor / Wall 90° / Ceiling 180°)
+    // Full 360° Directional Dodge Spin OR Surface-Aligned Orientation (Floor / Curved Ramp / Wall 90° / Ceiling 180°)
     const fullTurnRate = (Math.PI * 2) / 0.42;
     if (car.dodgeTimer > 0) {
       car.dodgeTimer = Math.max(0, car.dodgeTimer - dt);
@@ -1595,18 +1959,18 @@ export function stepArenaPhysics(
         car.dodgeType = 'none';
       }
     } else if (car.surfaceState === 'ceiling') {
-      // Upside-down on ceiling!
       const blend = 1 - Math.exp(-12 * dt);
       car.pitch += (0 - normalizeAngle(car.pitch)) * blend;
       const rollDiff = normalizeAngle(Math.PI - car.roll);
       car.roll = normalizeAngle(car.roll + rollDiff * blend);
-    } else if (car.surfaceState === 'wall') {
-      // Tilt car 90° onto the wall surface based on heading relative to wall normal
-      const intoWallDot = -(newFwdX * car.wallNormal.x + newFwdZ * car.wallNormal.z);
-      const sideWallDot = -(rightX * car.wallNormal.x + rightZ * car.wallNormal.z);
-      const targetPitch = clamp(-intoWallDot * (Math.PI * 0.46), -1.45, 1.45);
-      const targetRoll = clamp(sideWallDot * (Math.PI * 0.46), -1.45, 1.45);
-      const blend = 1 - Math.exp(-12 * dt);
+    } else if (car.surfaceState === 'wall' || (!inGoalX && wallEval.rampSlopeAngle > 0.08 && car.isGrounded)) {
+      const slopeAngle =
+        car.surfaceState === 'wall' ? Math.PI * 0.46 : wallEval.rampSlopeAngle;
+      const intoWallDot = -(newFwdX * wallEval.nx + newFwdZ * wallEval.nz);
+      const sideWallDot = -(rightX * wallEval.nx + rightZ * wallEval.nz);
+      const targetPitch = clamp(-intoWallDot * slopeAngle, -1.45, 1.45);
+      const targetRoll = clamp(sideWallDot * slopeAngle, -1.45, 1.45);
+      const blend = 1 - Math.exp(-14 * dt);
       car.pitch = normalizeAngle(car.pitch) + (targetPitch - normalizeAngle(car.pitch)) * blend;
       car.roll = normalizeAngle(car.roll) + (targetRoll - normalizeAngle(car.roll)) * blend;
     } else if (!car.isGrounded) {
@@ -1615,7 +1979,9 @@ export function stepArenaPhysics(
     } else {
       car.pitch = normalizeAngle(car.pitch) * (1 - Math.exp(-14 * dt));
       const targetRoll = -input.steer * clamp(Math.abs(forwardSpeed) / 35, 0, 1) * 0.16;
-      car.roll = normalizeAngle(car.roll) + (targetRoll - normalizeAngle(car.roll)) * (1 - Math.exp(-14 * dt));
+      car.roll =
+        normalizeAngle(car.roll) +
+        (targetRoll - normalizeAngle(car.roll)) * (1 - Math.exp(-14 * dt));
     }
 
     // Boost Pad Pickups (Big = 20s cooldown, Small = 10s cooldown)
@@ -1633,7 +1999,7 @@ export function stepArenaPhysics(
     }
   }
 
-  // Car-to-Car Collisions & Supersonic Turbo Demolition ("Arabalarla Son Hızda Turboyla Patlatma")
+  // Car-to-Car Collisions & Supersonic Turbo Demolition
   for (let i = 0; i < state.cars.length; i++) {
     for (let j = i + 1; j < state.cars.length; j++) {
       const a = state.cars[i];
@@ -1703,7 +2069,6 @@ export function stepArenaPhysics(
   ball.velocity.x *= ballDrag;
   ball.velocity.z *= ballDrag;
 
-  // Clamp max ball speed
   const ballSpeed = Math.hypot(ball.velocity.x, ball.velocity.y, ball.velocity.z);
   if (ballSpeed > 74) {
     const scale = 74 / ballSpeed;
@@ -1716,21 +2081,7 @@ export function stepArenaPhysics(
   ball.position.y += ball.velocity.y * dt;
   ball.position.z += ball.velocity.z * dt;
 
-  // Ball Ground & Ceiling Bounce
-  if (ball.position.y < ball.radius) {
-    ball.position.y = ball.radius;
-    if (ball.velocity.y < 0) {
-      ball.velocity.y = -ball.velocity.y * 0.74;
-      if (Math.abs(ball.velocity.y) < 1.5) ball.velocity.y = 0;
-    }
-    ball.angularVelocity.x = ball.velocity.z / ball.radius;
-    ball.angularVelocity.z = -ball.velocity.x / ball.radius;
-  } else if (ball.position.y > ARENA_BOUNDS.ceiling - ball.radius) {
-    ball.position.y = ARENA_BOUNDS.ceiling - ball.radius;
-    ball.velocity.y = -Math.abs(ball.velocity.y) * 0.74;
-  }
-
-  // Goal Detection & Rounded Stadium Wall Bounce for Ball
+  // Goal Detection & Solid Curved Ramp + Rounded Stadium Wall Bounce for Ball
   const inGoalMouth =
     Math.abs(ball.position.x) < ARENA_BOUNDS.goalHalfWidth - ball.radius * 0.35 &&
     ball.position.y < ARENA_BOUNDS.goalHeight;
@@ -1745,6 +2096,11 @@ export function stepArenaPhysics(
       events.goalScored = 'blue';
       const scorer = state.cars.find((c) => c.name === ball.lastTouchedBy && c.team === 'blue');
       if (scorer) scorer.goals += 1;
+
+      if (state.isOvertime) {
+        state.matchEnded = true;
+        events.goldenGoalWinner = 'blue';
+      }
       return events;
     } else if (ball.position.z < -(ARENA_BOUNDS.halfLength + ball.radius * 0.65)) {
       state.orangeScore += 1;
@@ -1755,6 +2111,11 @@ export function stepArenaPhysics(
       events.goalScored = 'orange';
       const scorer = state.cars.find((c) => c.name === ball.lastTouchedBy && c.team === 'orange');
       if (scorer) scorer.goals += 1;
+
+      if (state.isOvertime) {
+        state.matchEnded = true;
+        events.goldenGoalWinner = 'orange';
+      }
       return events;
     }
   } else {
@@ -1764,19 +2125,46 @@ export function stepArenaPhysics(
       ball.radius,
       false
     );
+
+    // Ball rides up the solid curved corner/wall ramp block
+    const minBallY = ball.radius + ballWall.rampHeightY;
+    if (ball.position.y < minBallY) {
+      ball.position.y = minBallY;
+      const vIntoRamp = -(ball.velocity.x * ballWall.nx + ball.velocity.z * ballWall.nz);
+      if (vIntoRamp > 2 && ballWall.rampSlopeAngle > 0.08) {
+        ball.velocity.y = Math.max(ball.velocity.y, vIntoRamp * Math.sin(ballWall.rampSlopeAngle) * 0.9);
+      } else if (ball.velocity.y < 0) {
+        ball.velocity.y = -ball.velocity.y * 0.74;
+        if (Math.abs(ball.velocity.y) < 1.5) ball.velocity.y = 0;
+      }
+    }
+
     if (ballWall.penetration > 0) {
       ball.position.x = ballWall.clampedX;
       ball.position.z = ballWall.clampedZ;
       const vDotN = ball.velocity.x * ballWall.nx + ball.velocity.z * ballWall.nz;
       if (vDotN < 0) {
-        // Curved ramp lift when ball hits lower wall fast
-        if (ball.position.y < 6.0 && -vDotN > 10) {
-          ball.velocity.y += -vDotN * 0.34;
+        if (ball.position.y < 7.0 && -vDotN > 8) {
+          ball.velocity.y += -vDotN * 0.42;
         }
         ball.velocity.x -= (1 + 0.78) * vDotN * ballWall.nx;
         ball.velocity.z -= (1 + 0.78) * vDotN * ballWall.nz;
       }
     }
+  }
+
+  // Ball Ground & Ceiling Bounce
+  if (ball.position.y < ball.radius) {
+    ball.position.y = ball.radius;
+    if (ball.velocity.y < 0) {
+      ball.velocity.y = -ball.velocity.y * 0.74;
+      if (Math.abs(ball.velocity.y) < 1.5) ball.velocity.y = 0;
+    }
+    ball.angularVelocity.x = ball.velocity.z / ball.radius;
+    ball.angularVelocity.z = -ball.velocity.x / ball.radius;
+  } else if (ball.position.y > ARENA_BOUNDS.ceiling - ball.radius) {
+    ball.position.y = ARENA_BOUNDS.ceiling - ball.radius;
+    ball.velocity.y = -Math.abs(ball.velocity.y) * 0.74;
   }
 
   // Car-to-Ball Collisions
@@ -1863,13 +2251,28 @@ export function purchaseMarketItem(
 } {
   const item = MARKET_CATALOG.find((m) => m.id === itemId);
   if (!item) {
-    return { ok: false, error: 'Eşya katalogda bulunamadı.', newCredits: currentCredits, newOwnedItemIds: ownedItemIds };
+    return {
+      ok: false,
+      error: 'Eşya katalogda bulunamadı.',
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds
+    };
   }
   if (ownedItemIds.includes(itemId)) {
-    return { ok: false, error: 'Bu eşya zaten garaj envanterinizde mevcut.', newCredits: currentCredits, newOwnedItemIds: ownedItemIds };
+    return {
+      ok: false,
+      error: 'Bu eşya zaten garaj envanterinizde mevcut.',
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds
+    };
   }
   if (ownedItemIds.length >= 50) {
-    return { ok: false, error: 'Envanter kapasitesi (50 eşya) doldu.', newCredits: currentCredits, newOwnedItemIds: ownedItemIds };
+    return {
+      ok: false,
+      error: 'Envanter kapasitesi (50 eşya) doldu.',
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds
+    };
   }
   if (currentCredits < item.priceCredits) {
     return {
@@ -1885,6 +2288,197 @@ export function purchaseMarketItem(
     newOwnedItemIds: [...ownedItemIds, itemId],
     item
   };
+}
+
+/**
+ * Converts a Blueprint into a permanent usable Garage Item by paying its credit build cost.
+ */
+export function buildBlueprintItem(
+  blueprintId: string,
+  currentCredits: number,
+  ownedItemIds: string[],
+  ownedBlueprintIds: string[]
+): {
+  ok: boolean;
+  error?: string;
+  newCredits: number;
+  newOwnedItemIds: string[];
+  newOwnedBlueprintIds: string[];
+  builtItem?: MarketItem;
+} {
+  const bp = BLUEPRINT_CATALOG.find((b) => b.blueprintId === blueprintId);
+  if (!bp) {
+    return {
+      ok: false,
+      error: 'Blueprint bulunamadı.',
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: ownedBlueprintIds
+    };
+  }
+  if (!ownedBlueprintIds.includes(blueprintId)) {
+    return {
+      ok: false,
+      error: 'Bu Blueprint envanterinizde yok.',
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: ownedBlueprintIds
+    };
+  }
+  if (ownedItemIds.includes(bp.targetItemId)) {
+    return {
+      ok: false,
+      error: 'Bu eşyanın normal hali zaten garajınızda var!',
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: ownedBlueprintIds
+    };
+  }
+  if (currentCredits < bp.buildCostCredits) {
+    return {
+      ok: false,
+      error: `Blueprint üretimi için ${bp.buildCostCredits} CR gerekli (Mevcut: ${currentCredits} CR).`,
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: ownedBlueprintIds
+    };
+  }
+  const targetItem = MARKET_CATALOG.find((m) => m.id === bp.targetItemId);
+  return {
+    ok: true,
+    newCredits: currentCredits - bp.buildCostCredits,
+    newOwnedItemIds: [...ownedItemIds, bp.targetItemId],
+    newOwnedBlueprintIds: ownedBlueprintIds.filter((id) => id !== blueprintId),
+    builtItem: targetItem
+  };
+}
+
+/**
+ * Rocket League Trade-In (Takas) System:
+ * Trades in selected normal items or blueprints and automatically rolls a random new item!
+ */
+export function executeRocketTradeIn(
+  selectedTradeIds: string[],
+  ownedItemIds: string[],
+  ownedBlueprintIds: string[],
+  tradeMode: 'items' | 'blueprints'
+): {
+  ok: boolean;
+  error?: string;
+  newOwnedItemIds: string[];
+  newOwnedBlueprintIds: string[];
+  rewardedItem?: MarketItem;
+  rewardedBlueprint?: BlueprintItem;
+} {
+  if (selectedTradeIds.length < 2) {
+    return {
+      ok: false,
+      error: 'Takas yapmak için en az 2 eşya veya blueprint seçmelisiniz.',
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: ownedBlueprintIds
+    };
+  }
+
+  if (tradeMode === 'blueprints') {
+    const remainingBp = ownedBlueprintIds.filter((id) => !selectedTradeIds.includes(id));
+    const unownedItems = MARKET_CATALOG.filter((m) => !ownedItemIds.includes(m.id));
+    const pool = unownedItems.length > 0 ? unownedItems : MARKET_CATALOG;
+    const wonItem = pool[Math.floor(Math.random() * pool.length)];
+    const updatedOwned = ownedItemIds.includes(wonItem.id)
+      ? ownedItemIds
+      : [...ownedItemIds, wonItem.id];
+    return {
+      ok: true,
+      newOwnedItemIds: updatedOwned,
+      newOwnedBlueprintIds: remainingBp,
+      rewardedItem: wonItem
+    };
+  } else {
+    // Trade in normal items (keep at least 1 default item per slot safe or allow re-rolling)
+    const remainingItems = ownedItemIds.filter((id) => !selectedTradeIds.includes(id));
+    const candidatePool = MARKET_CATALOG.filter(
+      (m) => !selectedTradeIds.includes(m.id) && m.priceCredits > 0
+    );
+    const pool = candidatePool.length > 0 ? candidatePool : MARKET_CATALOG;
+    const wonItem = pool[Math.floor(Math.random() * pool.length)];
+    const finalItems = remainingItems.includes(wonItem.id)
+      ? remainingItems
+      : [...remainingItems, wonItem.id];
+    return {
+      ok: true,
+      newOwnedItemIds: finalItems,
+      newOwnedBlueprintIds: ownedBlueprintIds,
+      rewardedItem: wonItem
+    };
+  }
+}
+
+/**
+ * Opens a Drop Crate earned from missions and returns a random Blueprint or Garage Item + Bonus Credits.
+ */
+export function openDropCrate(
+  currentCrates: number,
+  ownedItemIds: string[],
+  ownedBlueprintIds: string[],
+  currentCredits: number
+): {
+  ok: boolean;
+  error?: string;
+  newCrates: number;
+  newCredits: number;
+  newOwnedItemIds: string[];
+  newOwnedBlueprintIds: string[];
+  dropLabel: string;
+} {
+  if (currentCrates <= 0) {
+    return {
+      ok: false,
+      error: 'Açılacak Kutu (Drop) bulunmuyor. Görevleri tamamlayarak kutu kazanın!',
+      newCrates: currentCrates,
+      newCredits: currentCredits,
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: ownedBlueprintIds,
+      dropLabel: ''
+    };
+  }
+
+  const roll = Math.random();
+  const bonusCredits = 75;
+  if (roll < 0.55) {
+    // Drop a Blueprint
+    const unownedBps = BLUEPRINT_CATALOG.filter(
+      (b) => !ownedBlueprintIds.includes(b.blueprintId)
+    );
+    const pool = unownedBps.length > 0 ? unownedBps : BLUEPRINT_CATALOG;
+    const bp = pool[Math.floor(Math.random() * pool.length)];
+    const nextBps = ownedBlueprintIds.includes(bp.blueprintId)
+      ? ownedBlueprintIds
+      : [...ownedBlueprintIds, bp.blueprintId];
+    return {
+      ok: true,
+      newCrates: currentCrates - 1,
+      newCredits: currentCredits + bonusCredits,
+      newOwnedItemIds: ownedItemIds,
+      newOwnedBlueprintIds: nextBps,
+      dropLabel: `KUTUDAN ÇIKTI: ${bp.itemName} + ${bonusCredits} Kredi!`
+    };
+  } else {
+    // Drop a direct Garage Item
+    const unownedItems = MARKET_CATALOG.filter((m) => !ownedItemIds.includes(m.id));
+    const pool = unownedItems.length > 0 ? unownedItems : MARKET_CATALOG;
+    const item = pool[Math.floor(Math.random() * pool.length)];
+    const nextItems = ownedItemIds.includes(item.id)
+      ? ownedItemIds
+      : [...ownedItemIds, item.id];
+    return {
+      ok: true,
+      newCrates: currentCrates - 1,
+      newCredits: currentCredits + bonusCredits,
+      newOwnedItemIds: nextItems,
+      newOwnedBlueprintIds: ownedBlueprintIds,
+      dropLabel: `KUTUDAN ÇIKTI: ${item.name} (${item.rarity}) + ${bonusCredits} Kredi!`
+    };
+  }
 }
 
 export function claimSeasonTierReward(
