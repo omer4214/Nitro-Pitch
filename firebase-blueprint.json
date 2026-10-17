@@ -1,0 +1,266 @@
+{
+  "entities": {
+    "PlayerProfile": {
+      "title": "PlayerProfile",
+      "description": "Public competitive player profile storing MMR, rank tier, seasonal XP, credits, equipped cosmetics, and career statistics.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Player display handle",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "mmr": {
+          "type": "number",
+          "description": "Competitive Matchmaking Rating"
+        },
+        "rankTier": {
+          "type": "string",
+          "description": "Current competitive rank tier name",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "credits": {
+          "type": "number",
+          "description": "In-game marketplace currency balance"
+        },
+        "seasonXp": {
+          "type": "number",
+          "description": "Seasonal Rocket Pass XP earned"
+        },
+        "seasonLevel": {
+          "type": "number",
+          "description": "Seasonal Rocket Pass level"
+        },
+        "wins": {
+          "type": "number",
+          "description": "Total career victories"
+        },
+        "matchesPlayed": {
+          "type": "number",
+          "description": "Total career matches completed"
+        },
+        "goalsScored": {
+          "type": "number",
+          "description": "Total career goals scored"
+        },
+        "equippedBodyColor": {
+          "type": "string",
+          "description": "Equipped chassis hex color",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "equippedFinish": {
+          "type": "string",
+          "description": "Equipped PBR surface finish ID",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "equippedBoostColor": {
+          "type": "string",
+          "description": "Equipped nitro boost color hex",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "equippedWheelStyle": {
+          "type": "string",
+          "description": "Equipped wheel rim style ID",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "ownedItemIds": {
+          "type": "array",
+          "description": "Bounded list of unlocked marketplace and season item IDs (max 50)"
+        },
+        "claimedSeasonTiers": {
+          "type": "array",
+          "description": "Bounded list of claimed seasonal tier numbers (max 30)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "mmr",
+        "rankTier",
+        "credits",
+        "seasonXp",
+        "seasonLevel",
+        "wins",
+        "matchesPlayed",
+        "goalsScored",
+        "equippedBodyColor",
+        "equippedFinish",
+        "equippedBoostColor",
+        "equippedWheelStyle",
+        "ownedItemIds",
+        "claimedSeasonTiers",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MatchRecord": {
+      "title": "MatchRecord",
+      "description": "Completed competitive match record for a player.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Player UID who recorded the match",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "mode": {
+          "type": "string",
+          "description": "Match mode (1v1, 2v2, Practice)",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "playerScore": {
+          "type": "number",
+          "description": "Goals scored by player team"
+        },
+        "opponentScore": {
+          "type": "number",
+          "description": "Goals scored by opponent team"
+        },
+        "opponentName": {
+          "type": "string",
+          "description": "Opponent display name",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "mmrDelta": {
+          "type": "number",
+          "description": "MMR rating change after match"
+        },
+        "outcome": {
+          "type": "string",
+          "description": "Match outcome (victory or defeat)",
+          "enum": ["victory", "defeat"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Terminal status of the match record",
+          "enum": ["completed"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Match completion server timestamp"
+        }
+      },
+      "required": [
+        "ownerId",
+        "mode",
+        "playerScore",
+        "opponentScore",
+        "opponentName",
+        "mmrDelta",
+        "outcome",
+        "status",
+        "createdAt"
+      ]
+    },
+    "MarketOrder": {
+      "title": "MarketOrder",
+      "description": "Player-to-player or shop item trade listing in the in-game marketplace.",
+      "type": "object",
+      "properties": {
+        "sellerId": {
+          "type": "string",
+          "description": "UID of the player listing the item",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerName": {
+          "type": "string",
+          "description": "Display name of the seller",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "itemId": {
+          "type": "string",
+          "description": "Catalog ID of the cosmetic item",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "itemName": {
+          "type": "string",
+          "description": "Display name of the cosmetic item",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "rarity": {
+          "type": "string",
+          "description": "Item rarity tier",
+          "enum": ["Common", "Rare", "Import", "Exotic", "BlackMarket"]
+        },
+        "priceCredits": {
+          "type": "number",
+          "description": "Asking price in Credits"
+        },
+        "status": {
+          "type": "string",
+          "description": "Listing status",
+          "enum": ["active", "sold", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Listing creation server timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Listing update server timestamp"
+        }
+      },
+      "required": [
+        "sellerId",
+        "sellerName",
+        "itemId",
+        "itemName",
+        "rarity",
+        "priceCredits",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/players/{playerId}": {
+      "schema": { "$ref": "#/entities/PlayerProfile" },
+      "description": "Stores public competitive profile, garage loadout, MMR, and seasonal progression for each player."
+    },
+    "/players/{playerId}/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/MatchRecord" },
+      "description": "Stores immutable completed match history records belonging to a player."
+    },
+    "/marketOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/MarketOrder" },
+      "description": "Stores player marketplace trade listings."
+    }
+  }
+}

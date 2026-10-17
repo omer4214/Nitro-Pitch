@@ -1,0 +1,214 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // Validation Blueprint: PlayerProfile
+    function isValidPlayerProfile(data) {
+      return data.keys().hasAll([
+        'uid', 'displayName', 'mmr', 'rankTier', 'credits',
+        'seasonXp', 'seasonLevel', 'wins', 'matchesPlayed', 'goalsScored',
+        'equippedBodyColor', 'equippedFinish', 'equippedBoostColor', 'equippedWheelStyle',
+        'ownedItemIds', 'claimedSeasonTiers', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'uid', 'displayName', 'mmr', 'rankTier', 'credits',
+        'seasonXp', 'seasonLevel', 'wins', 'matchesPlayed', 'goalsScored',
+        'equippedBodyColor', 'equippedFinish', 'equippedBoostColor', 'equippedWheelStyle',
+        'ownedItemIds', 'claimedSeasonTiers', 'createdAt', 'updatedAt'
+      ]) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.uid == request.auth.uid &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+      data.mmr is number && data.mmr >= 0 && data.mmr <= 10000 &&
+      data.rankTier is string && data.rankTier.size() >= 1 && data.rankTier.size() <= 40 &&
+      data.credits is number && data.credits >= 0 && data.credits <= 10000000 &&
+      data.seasonXp is number && data.seasonXp >= 0 && data.seasonXp <= 10000000 &&
+      data.seasonLevel is number && data.seasonLevel >= 1 && data.seasonLevel <= 200 &&
+      data.wins is number && data.wins >= 0 && data.wins <= 1000000 &&
+      data.matchesPlayed is number && data.matchesPlayed >= 0 && data.matchesPlayed <= 1000000 &&
+      data.goalsScored is number && data.goalsScored >= 0 && data.goalsScored <= 10000000 &&
+      data.equippedBodyColor is string && data.equippedBodyColor.size() >= 4 && data.equippedBodyColor.size() <= 16 &&
+      data.equippedFinish is string && data.equippedFinish.size() >= 1 && data.equippedFinish.size() <= 32 &&
+      data.equippedBoostColor is string && data.equippedBoostColor.size() >= 4 && data.equippedBoostColor.size() <= 16 &&
+      data.equippedWheelStyle is string && data.equippedWheelStyle.size() >= 1 && data.equippedWheelStyle.size() <= 32 &&
+      data.ownedItemIds is list && data.ownedItemIds.size() <= 50 &&
+      (data.ownedItemIds.size() == 0 || (data.ownedItemIds[0] is string && data.ownedItemIds[0].size() <= 64)) &&
+      data.claimedSeasonTiers is list && data.claimedSeasonTiers.size() <= 30 &&
+      (data.claimedSeasonTiers.size() == 0 || data.claimedSeasonTiers[0] is number) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: MatchRecord
+    function isValidMatchRecord(data) {
+      return data.keys().hasAll([
+        'ownerId', 'mode', 'playerScore', 'opponentScore',
+        'opponentName', 'mmrDelta', 'outcome', 'status', 'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'ownerId', 'mode', 'playerScore', 'opponentScore',
+        'opponentName', 'mmrDelta', 'outcome', 'status', 'createdAt'
+      ]) &&
+      data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.ownerId == request.auth.uid &&
+      data.mode is string && data.mode.size() >= 1 && data.mode.size() <= 24 &&
+      data.playerScore is number && data.playerScore >= 0 && data.playerScore <= 99 &&
+      data.opponentScore is number && data.opponentScore >= 0 && data.opponentScore <= 99 &&
+      data.opponentName is string && data.opponentName.size() >= 1 && data.opponentName.size() <= 60 &&
+      data.mmrDelta is number && data.mmrDelta >= -200 && data.mmrDelta <= 200 &&
+      data.outcome is string && data.outcome.size() <= 16 && (data.outcome == 'victory' || data.outcome == 'defeat') &&
+      data.status is string && data.status.size() <= 16 && data.status == 'completed' &&
+      data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: MarketOrder
+    function isValidMarketOrder(data) {
+      return data.keys().hasAll([
+        'sellerId', 'sellerName', 'itemId', 'itemName',
+        'rarity', 'priceCredits', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'sellerId', 'sellerName', 'itemId', 'itemName',
+        'rarity', 'priceCredits', 'status', 'createdAt', 'updatedAt'
+      ]) &&
+      data.sellerId is string && data.sellerId.size() >= 1 && data.sellerId.size() <= 128 && data.sellerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.sellerId == request.auth.uid &&
+      data.sellerName is string && data.sellerName.size() >= 1 && data.sellerName.size() <= 60 &&
+      data.itemId is string && data.itemId.size() >= 1 && data.itemId.size() <= 64 && data.itemId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 60 &&
+      data.rarity is string && data.rarity.size() <= 24 &&
+      (data.rarity == 'Common' || data.rarity == 'Rare' || data.rarity == 'Import' || data.rarity == 'Exotic' || data.rarity == 'BlackMarket') &&
+      data.priceCredits is number && data.priceCredits >= 50 && data.priceCredits <= 100000 &&
+      data.status is string && data.status.size() <= 16 &&
+      (data.status == 'active' || data.status == 'sold' || data.status == 'cancelled') &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // Collection: /players/{playerId}
+    match /players/{playerId} {
+      allow get: if isSignedIn() && isValidId(playerId) && existing().uid == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+
+      allow create: if isVerifiedUser() &&
+        isValidId(playerId) &&
+        playerId == request.auth.uid &&
+        isValidPlayerProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(playerId) &&
+        playerId == request.auth.uid &&
+        isValidPlayerProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: Garage Loadout & Cosmetics Update
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'equippedBodyColor', 'equippedFinish', 'equippedBoostColor',
+            'equippedWheelStyle', 'ownedItemIds', 'credits', 'claimedSeasonTiers', 'updatedAt'
+          ]) ||
+          // Action 2: Match Progression & Ranked MMR Update
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'mmr', 'rankTier', 'credits', 'seasonXp', 'seasonLevel',
+            'wins', 'matchesPlayed', 'goalsScored', 'updatedAt'
+          ]) ||
+          // Action 3: Profile Display Name Update
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'updatedAt'
+          ]) ||
+          // Action 4: Full New-Player Zero Reset
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'mmr', 'rankTier', 'credits', 'seasonXp', 'seasonLevel',
+            'wins', 'matchesPlayed', 'goalsScored',
+            'equippedBodyColor', 'equippedFinish', 'equippedBoostColor',
+            'equippedWheelStyle', 'ownedItemIds', 'claimedSeasonTiers', 'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+
+      // Subcollection: /players/{playerId}/matches/{matchId}
+      match /matches/{matchId} {
+        allow get: if isSignedIn() &&
+          isValidId(playerId) &&
+          isValidId(matchId) &&
+          existing().ownerId == request.auth.uid &&
+          get(/databases/$(database)/documents/players/$(playerId)).data.uid == request.auth.uid;
+
+        allow list: if isSignedIn() &&
+          resource.data.ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser() &&
+          isValidId(playerId) &&
+          isValidId(matchId) &&
+          playerId == request.auth.uid &&
+          isValidMatchRecord(incoming()) &&
+          incoming().createdAt == request.time &&
+          get(/databases/$(database)/documents/players/$(playerId)).data.uid == request.auth.uid;
+
+        // Terminal State Lock: Completed match records are immutable
+        allow update, delete: if false;
+      }
+    }
+
+    // Collection: /marketOrders/{orderId}
+    match /marketOrders/{orderId} {
+      allow get: if isSignedIn() &&
+        isValidId(orderId) &&
+        (existing().sellerId == request.auth.uid || existing().status == 'active');
+
+      allow list: if isSignedIn() &&
+        (resource.data.sellerId == request.auth.uid || resource.data.status == 'active');
+
+      allow create: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidMarketOrder(incoming()) &&
+        incoming().status == 'active' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/players/$(incoming().sellerId)) &&
+        get(/databases/$(database)/documents/players/$(incoming().sellerId)).data.uid == request.auth.uid;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidMarketOrder(incoming()) &&
+        existing().status == 'active' &&
+        incoming().sellerId == existing().sellerId &&
+        incoming().itemId == existing().itemId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+        get(/databases/$(database)/documents/players/$(existing().sellerId)).data.uid == request.auth.uid;
+
+      allow delete: if false;
+    }
+  }
+}
