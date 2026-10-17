@@ -113,7 +113,12 @@ service cloud.firestore {
 
     // Collection: /players/{playerId}
     match /players/{playerId} {
-      allow get: if isSignedIn() && isValidId(playerId) && existing().uid == request.auth.uid;
+      // Allow owner to get their own profile document even when resource == null (first-time login check)
+      allow get: if isSignedIn() &&
+        isValidId(playerId) &&
+        playerId == request.auth.uid &&
+        (resource == null || existing().uid == request.auth.uid);
+
       allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
 
       allow create: if isVerifiedUser() &&
@@ -160,7 +165,8 @@ service cloud.firestore {
         allow get: if isSignedIn() &&
           isValidId(playerId) &&
           isValidId(matchId) &&
-          existing().ownerId == request.auth.uid &&
+          playerId == request.auth.uid &&
+          (resource == null || existing().ownerId == request.auth.uid) &&
           get(/databases/$(database)/documents/players/$(playerId)).data.uid == request.auth.uid;
 
         allow list: if isSignedIn() &&
@@ -183,7 +189,7 @@ service cloud.firestore {
     match /marketOrders/{orderId} {
       allow get: if isSignedIn() &&
         isValidId(orderId) &&
-        (existing().sellerId == request.auth.uid || existing().status == 'active');
+        (resource == null || existing().sellerId == request.auth.uid || existing().status == 'active');
 
       allow list: if isSignedIn() &&
         (resource.data.sellerId == request.auth.uid || resource.data.status == 'active');

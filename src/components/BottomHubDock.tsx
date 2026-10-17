@@ -20,7 +20,7 @@ import {
 } from '../services/firebaseService';
 import { GmailSummaryMessage } from '../services/gmailService';
 
-export type HubTab = 'lobby' | 'market' | 'season' | 'settings' | 'gmail';
+export type HubTab = 'lobby' | 'market' | 'season' | 'settings' | 'releases' | 'gmail';
 
 interface BottomHubDockProps {
   activeTab: HubTab;
@@ -224,6 +224,7 @@ export const BottomHubDock: React.FC<BottomHubDockProps> = ({
                 { id: 'market', label: 'Pazar & Garaj' },
                 { id: 'season', label: `Sezon (Sv.${seasonInfo.level})` },
                 { id: 'settings', label: 'Ayarlar' },
+                { id: 'releases', label: 'EXE & APK İndir' },
                 { id: 'gmail', label: 'Kulüp' }
               ] as const
             ).map((tab) => (
@@ -992,6 +993,88 @@ export const BottomHubDock: React.FC<BottomHubDockProps> = ({
                     </button>
                   </div>
                 </form>
+              </div>
+            )}
+
+            {/* TAB 6: GITHUB RELEASES — EXE & APK DOWNLOAD PACKAGES */}
+            {activeTab === 'releases' && (
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                {/* Col 1: Direct Download Buttons for EXE, APK, and Full Release ZIP */}
+                <div className="md:col-span-7 bg-[#121e36] border-2 border-slate-600/90 rounded-xl p-2.5 flex flex-col justify-between gap-2">
+                  <div className="flex items-center justify-between border-b border-slate-600/80 pb-1">
+                    <span className="text-xs font-display font-bold text-cyan-300">
+                      Oyun İndirme Klasörü: <code className="text-amber-300">oyun-indirme-paketi/</code>
+                    </span>
+                    <span className="text-[10px] font-mono-tabular px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400 text-emerald-300 font-bold">
+                      v1.0.0 Hazır
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-200 leading-snug">
+                    GitHub Releases sayfasına yükleyeceğiniz Windows PC (<b>.exe</b>) ve Android Mobil (<b>.apk</b>) paketleri proje içindeki{' '}
+                    <code className="px-1 py-0.5 rounded bg-[#0b1324] border border-slate-600 text-amber-300 font-mono-tabular">
+                      oyun-indirme-paketi/
+                    </code>{' '}
+                    klasörüne oluşturuldu. Aşağıdan doğrudan bilgisayarınıza da indirebilirsiniz:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                    <a
+                      href="/downloads/NitroPitch-Windows-x64.exe"
+                      download="NitroPitch-Windows-x64.exe"
+                      className="px-2.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 border-2 border-amber-200 text-slate-950 font-display font-bold text-[11px] text-center shadow cursor-pointer flex flex-col items-center justify-center"
+                    >
+                      <span>WINDOWS PC (.EXE)</span>
+                      <span className="text-[9px] font-mono-tabular opacity-85">
+                        NitroPitch-Windows-x64.exe
+                      </span>
+                    </a>
+
+                    <a
+                      href="/downloads/NitroPitch-Android-Mobile.apk"
+                      download="NitroPitch-Android-Mobile.apk"
+                      className="px-2.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 border-2 border-cyan-200 text-slate-950 font-display font-bold text-[11px] text-center shadow cursor-pointer flex flex-col items-center justify-center"
+                    >
+                      <span>ANDROID MOBİL (.APK)</span>
+                      <span className="text-[9px] font-mono-tabular opacity-85">
+                        NitroPitch-Android-Mobile.apk
+                      </span>
+                    </a>
+
+                    <a
+                      href="/downloads/NitroPitch-Full-Release-Bundle.zip"
+                      download="NitroPitch-Full-Release-Bundle.zip"
+                      className="px-2.5 py-2 rounded-xl bg-[#0b1324] hover:bg-[#192b4d] border-2 border-slate-400 text-white font-display font-bold text-[11px] text-center shadow cursor-pointer flex flex-col items-center justify-center"
+                    >
+                      <span>TÜM PAKET (.ZIP)</span>
+                      <span className="text-[9px] font-mono-tabular text-slate-300">
+                        EXE + APK + WebGL
+                      </span>
+                    </a>
+                  </div>
+                </div>
+
+                {/* Col 2: GitHub Releases Instructions & CI/CD Status */}
+                <div className="md:col-span-5 bg-[#121e36] border-2 border-slate-600/90 rounded-xl p-2.5 flex flex-col justify-between gap-1.5 text-[11px]">
+                  <div className="font-display font-bold text-amber-300 border-b border-slate-600/80 pb-1">
+                    GitHub Releases'e Nasıl Koyulur?
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-200 text-[10px] leading-snug">
+                    <li>
+                      Proje ana dizinindeki <b><code className="text-cyan-300">oyun-indirme-paketi/</code></b> klasörünü açın (veya soldaki butonlardan indirin).
+                    </li>
+                    <li>
+                      GitHub deponuzda sağdaki <b>Releases → Draft a new release</b> butonuna tıklayın.
+                    </li>
+                    <li>
+                      Tag olarak <code className="text-amber-300">v1.0.0</code> seçin ve{' '}
+                      <b>NitroPitch-Windows-x64.exe</b> ile <b>NitroPitch-Android-Mobile.apk</b> dosyalarını sürükleyip yayınlayın!
+                    </li>
+                  </ol>
+                  <div className="bg-[#0b1324] border border-slate-600 rounded-lg px-2 py-1 text-[10px] text-emerald-300 font-medium">
+                    Otomatik GitHub Actions (<code className="text-white">.github/workflows/build-exe-apk-release.yml</code>) eklendi!
+                  </div>
+                </div>
               </div>
             )}
           </div>

@@ -983,9 +983,10 @@ export default function App() {
                   type="button"
                   data-start="true"
                   onClick={handleStartMatch}
-                  className="px-2 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl bg-amber-500 hover:bg-amber-400 border-2 border-amber-200 text-slate-950 font-display font-bold text-[11px] sm:text-sm tracking-wide shadow-lg transition-transform active:scale-95 whitespace-nowrap cursor-pointer"
+                  className="px-1.5 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl bg-amber-500 hover:bg-amber-400 border-2 border-amber-200 text-slate-950 font-display font-bold text-[10px] sm:text-sm tracking-wide shadow-lg transition-transform active:scale-95 whitespace-nowrap cursor-pointer text-center"
                 >
-                  MAÇA BAŞLA ({selectedMode.toUpperCase()})
+                  <span className="sm:hidden">BAŞLA ({selectedMode.toUpperCase()})</span>
+                  <span className="hidden sm:inline">MAÇA BAŞLA ({selectedMode.toUpperCase()})</span>
                 </button>
 
                 <button
@@ -994,17 +995,21 @@ export default function App() {
                     setSelectedMode('practice');
                     handleStartMatchWithMode('practice');
                   }}
-                  className="px-2 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl bg-[#13203a] border-2 border-slate-500 hover:border-cyan-400 text-white font-display font-bold text-[11px] sm:text-xs tracking-wide transition-colors whitespace-nowrap cursor-pointer"
+                  className="px-1.5 py-2 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl bg-[#13203a] border-2 border-slate-500 hover:border-cyan-400 text-white font-display font-bold text-[10px] sm:text-xs tracking-wide transition-colors whitespace-nowrap cursor-pointer text-center"
                 >
-                  ANTRENMAN ({practiceBotEnabled ? 'BOTLU' : 'SERBEST'})
+                  <span className="sm:hidden">ANTRENMAN</span>
+                  <span className="hidden sm:inline">
+                    ANTRENMAN ({practiceBotEnabled ? 'BOTLU' : 'SERBEST'})
+                  </span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => handleOpenReplayTheater('title')}
-                  className="px-2 py-2 sm:px-3.5 sm:py-2.5 rounded-lg sm:rounded-xl bg-[#0c263b] border-2 border-cyan-400 text-cyan-100 font-display font-bold text-[11px] sm:text-xs tracking-wide transition-colors whitespace-nowrap cursor-pointer"
+                  className="px-1.5 py-2 sm:px-3.5 sm:py-2.5 rounded-lg sm:rounded-xl bg-[#0c263b] border-2 border-cyan-400 text-cyan-100 font-display font-bold text-[10px] sm:text-xs tracking-wide transition-colors whitespace-nowrap cursor-pointer text-center"
                 >
-                  MAÇ TEKRARI
+                  <span className="sm:hidden">TEKRAR İZLE</span>
+                  <span className="hidden sm:inline">MAÇ TEKRARI</span>
                 </button>
               </div>
 

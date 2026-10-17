@@ -1,0 +1,94 @@
+name: Build Windows EXE & Android APK for GitHub Releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows-exe:
+    name: Build Windows Desktop (.exe)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies & Build WebGL Game
+        run: |
+          npm install
+          npm run build
+          node scripts/build-release-packages.mjs
+
+      - name: Upload Windows EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NitroPitch-Windows-x64-EXE
+          path: oyun-indirme-paketi/NitroPitch-Windows-x64.exe
+
+  build-android-apk:
+    name: Build Android Mobile (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java JDK 17 for Android SDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Install Dependencies & Build APK Package
+        run: |
+          npm install
+          npm run build
+          node scripts/build-release-packages.mjs
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NitroPitch-Android-Mobile-APK
+          path: oyun-indirme-paketi/NitroPitch-Android-Mobile.apk
+
+  publish-github-release:
+    name: Attach EXE & APK to GitHub Release
+    needs: [build-windows-exe, build-android-apk]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Release Folder (oyun-indirme-paketi)
+        run: |
+          npm install
+          npm run build
+          node scripts/build-release-packages.mjs
+
+      - name: Publish GitHub Release with EXE and APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            oyun-indirme-paketi/NitroPitch-Windows-x64.exe
+            oyun-indirme-paketi/NitroPitch-Android-Mobile.apk
+            oyun-indirme-paketi/NitroPitch-Full-Release-Bundle.zip
+            oyun-indirme-paketi/BENI-OKU-GITHUB-RELEASES.md
+          generate_release_notes: true

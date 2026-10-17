@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "Nitro Pitch — 3D Cross-Platform Rocket Football",
+  "short_name": "NitroPitch",
+  "description": "3D Duvar ve Tavan Sürüşlü Roket Futbolu — PC ve Mobil Çapraz Platform Rekabetçi Arena",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070d19",
+  "theme_color": "#06b6d4",
+  "categories": ["games", "sports", "action"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
